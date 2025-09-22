@@ -21,6 +21,8 @@ from fastapi import FastAPI
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from telegram import Bot
 
+from db_repo import DBRepo
+
 
 # ----------------------------
 # Settings
@@ -57,6 +59,7 @@ DB_PATH = "./app.db"
 
 http_client: Optional[httpx.AsyncClient] = None
 db_conn: Optional[aiosqlite.Connection] = None
+db_repo: Optional[DBRepo] = None
 scheduler: Optional[AsyncIOScheduler] = None
 
 
@@ -69,91 +72,6 @@ def jlog(level: str, event: str, **kwargs: Any) -> None:
     if kwargs:
         payload.update(kwargs)
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
-
-
-# ----------------------------
-# DB
-# ----------------------------
-
-CREATE_TABLES_SQL = """
-CREATE TABLE IF NOT EXISTS bands (
-    name TEXT PRIMARY KEY,
-    low REAL NOT NULL,
-    high REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS alerts (
-    band TEXT,
-    side TEXT,
-    last_sent_ts INTEGER,
-    PRIMARY KEY (band, side)
-);
-"""
-
-async def init_db(conn: aiosqlite.Connection) -> None:
-    await conn.executescript(CREATE_TABLES_SQL)
-    await conn.commit()
-    await seed_bands_if_missing(conn)
-    await upsert_bands_from_env(conn, settings)
-
-async def seed_bands_if_missing(conn: aiosqlite.Connection) -> None:
-    defaults: List[Tuple[str, float, float]] = [("a", 0.0, 100.0), ("b", 0.0, 100.0), ("c", 0.0, 100.0)]
-    for name, low, high in defaults:
-        await conn.execute(
-            "INSERT OR IGNORE INTO bands(name, low, high) VALUES(?,?,?)",
-            (name, low, high),
-        )
-    await conn.commit()
-
-def _parse_band_spec(spec: str) -> Optional[Tuple[float, float]]:
-    try:
-        lo_str, hi_str = spec.strip().split("-", 1)
-        lo, hi = float(lo_str), float(hi_str)
-        if not math.isfinite(lo) or not math.isfinite(hi):
-            return None
-        if lo >= hi:
-            return None
-        return (lo, hi)
-    except Exception:
-        return None
-
-async def upsert_bands_from_env(conn: aiosqlite.Connection, settings: Settings) -> None:
-    for name, spec in (("a", settings.BAND_A), ("b", settings.BAND_B), ("c", settings.BAND_C)):
-        if not spec:
-            continue
-        parsed = _parse_band_spec(spec)
-        if parsed is None:
-            jlog("warn", "band_env_invalid", band=name, spec=spec)
-            continue
-        lo, hi = parsed
-        await conn.execute(
-            "INSERT INTO bands(name, low, high) VALUES(?,?,?) "
-            "ON CONFLICT(name) DO UPDATE SET low=excluded.low, high=excluded.high",
-            (name, lo, hi),
-        )
-        jlog("info", "band_env_upserted", band=name, low=lo, high=hi)
-    await conn.commit()
-
-async def get_bands(conn: aiosqlite.Connection) -> Dict[str, Tuple[float, float]]:
-    out: Dict[str, Tuple[float, float]] = {}
-    async with conn.execute("SELECT name, low, high FROM bands ORDER BY name ASC") as cur:
-        async for name, low, high in cur:
-            out[name] = (float(low), float(high))
-    return out
-
-async def get_last_alert(conn: aiosqlite.Connection, band: str, side: str) -> Optional[int]:
-    async with conn.execute(
-        "SELECT last_sent_ts FROM alerts WHERE band=? AND side=?", (band, side)
-    ) as cur:
-        row = await cur.fetchone()
-        return int(row[0]) if row and row[0] is not None else None
-
-async def set_last_alert(conn: aiosqlite.Connection, band: str, side: str, ts: int) -> None:
-    await conn.execute(
-        "INSERT INTO alerts(band, side, last_sent_ts) VALUES(?,?,?) "
-        "ON CONFLICT(band, side) DO UPDATE SET last_sent_ts=excluded.last_sent_ts",
-        (band, side, ts),
-    )
-    await conn.commit()
 
 
 # ----------------------------
@@ -304,9 +222,9 @@ def format_message(
         lines.append(f"{name}: {fmt_range(lo, hi)}")
     return "\n".join(lines)
 
-async def process_breaches(conn: aiosqlite.Connection, price: float, src_label: Optional[str]) -> None:
+async def process_breaches(repo: DBRepo, price: float, src_label: Optional[str]) -> None:
     now_ts = int(time.time())
-    bands = await get_bands(conn)
+    bands = await repo.get_bands()
     cooldown_secs = settings.COOLDOWN_MINUTES * 60
     sent = 0
 
@@ -319,14 +237,14 @@ async def process_breaches(conn: aiosqlite.Connection, price: float, src_label: 
         if side is None:
             continue
 
-        last = await get_last_alert(conn, name, side)
+        last = await repo.get_last_alert(name, side)
         if last is not None and (now_ts - last) < cooldown_secs:
             jlog("info", "cooldown_skip", band=name, side=side, seconds_remaining=cooldown_secs - (now_ts - last))
             continue
 
         text = format_message(name, side, price, src_label, bands)
         await send_telegram(text)
-        await set_last_alert(conn, name, side, now_ts)
+        await repo.set_last_alert(name, side, now_ts)
         sent += 1
 
     if sent == 0:
@@ -352,13 +270,13 @@ async def send_telegram(text: str) -> None:
 
 async def check_once() -> None:
     assert http_client is not None, "http client not initialized"
-    assert db_conn is not None, "db connection not initialized"
+    assert db_repo is not None, "db repo not initialized"
 
     try:
         decision = await decide_price(http_client, settings.SPREAD_MAX_PCT)
         if decision.suspect or decision.price is None:
             return  # already logged
-        await process_breaches(db_conn, decision.price, decision.label)
+        await process_breaches(db_repo, decision.price, decision.label)
     except Exception as e:
         jlog("error", "job_exception", err=str(e))
 
@@ -369,11 +287,12 @@ async def check_once() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, db_conn, scheduler
+    global http_client, db_conn, db_repo, scheduler
 
     # open db connection and init
     db_conn = await aiosqlite.connect(DB_PATH)
-    await init_db(db_conn)
+    db_repo = DBRepo(db_conn)
+    await db_repo.init(settings)
 
     # one httpx client (http/2), shared
     http_client = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
