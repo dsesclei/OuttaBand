@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import math
-from typing import Callable, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
 
 import aiosqlite
+from structlog.typing import FilteringBoundLogger
 
 if TYPE_CHECKING:  # pragma: no cover - used only for type hints
     from main import Settings
@@ -30,9 +31,9 @@ class DBRepo:
         ("c", 0.0, 100.0),
     )
 
-    def __init__(self, conn: aiosqlite.Connection, logger: Callable[..., None]) -> None:
+    def __init__(self, conn: aiosqlite.Connection, logger: FilteringBoundLogger) -> None:
         self._conn = conn
-        self._log: Callable[..., None] = logger
+        self._log: FilteringBoundLogger = logger
 
     async def init(self, settings: "Settings") -> None:
         await self._conn.executescript(self.CREATE_TABLES_SQL)
@@ -85,11 +86,11 @@ class DBRepo:
                 continue
             parsed = self._parse_band_spec(spec)
             if parsed is None:
-                self._log("warn", "band_env_invalid", band=name, spec=spec)
+                self._log.warning("band_env_invalid", band=name, spec=spec)
                 continue
             lo, hi = parsed
             await self.upsert_band(name, lo, hi)
-            self._log("info", "band_env_upserted", band=name, low=lo, high=hi)
+            self._log.info("band_env_upserted", band=name, low=lo, high=hi)
 
     @staticmethod
     def _parse_band_spec(spec: str) -> Optional[Tuple[float, float]]:

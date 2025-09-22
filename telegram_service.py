@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from typing import Callable, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, cast
 
 from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -16,24 +16,28 @@ from telegram.ext import (
 
 from db_repo import DBRepo
 from band_logic import fmt_range
+from structlog.typing import FilteringBoundLogger
 
 
 class TelegramSvc:
-    def __init__(self, token: str, chat_id: int) -> None:
+    def __init__(self, token: str, chat_id: int, logger: Optional[FilteringBoundLogger] = None) -> None:
         self._token = token
         self._chat_id = chat_id
         self._app: Optional[Application] = None
         self._repo: Optional[DBRepo] = None
         self._ready: asyncio.Event = asyncio.Event()
         self._pending: Dict[int, Tuple[str, Tuple[float, float]]] = {}
-        self._log: Optional[Callable[..., None]] = None
+        self._log: Optional[FilteringBoundLogger] = logger
 
     async def start(self, repo: DBRepo) -> None:
         if self._app is not None:
             return
 
         self._repo = repo
-        self._log = getattr(repo, "_log", None)
+        if self._log is None:
+            candidate = getattr(repo, "_log", None)
+            if candidate is not None:
+                self._log = cast(FilteringBoundLogger, candidate).bind(module="telegram")
         app = Application.builder().token(self._token).build()
         app.add_handler(CommandHandler("start", self._on_start))
         app.add_handler(CommandHandler("status", self._on_status))
@@ -370,7 +374,7 @@ class TelegramSvc:
 
         if self._log is not None:
             try:
-                self._log("info", "bands_set_exact", band=band, low=low, high=high)
+                self._log.info("bands_set_exact", band=band, low=low, high=high)
             except Exception:
                 pass
 

@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
+import logging.config
 import math
+import os
 import random
 import time
 from contextlib import asynccontextmanager
@@ -16,6 +18,8 @@ from typing import Any, Dict, Optional
 
 import aiosqlite
 import httpx
+import structlog
+from structlog.typing import FilteringBoundLogger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -66,14 +70,79 @@ scheduler: Optional[AsyncIOScheduler] = None
 
 
 # ----------------------------
-# Logging (structured json)
+# Logging
 # ----------------------------
 
-def jlog(level: str, event: str, **kwargs: Any) -> None:
-    payload = {"ts": int(time.time()), "level": level, "event": event}
-    if kwargs:
-        payload.update(kwargs)
-    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
+def configure_logging() -> FilteringBoundLogger:
+    level_name = os.getenv("LPBOT_LOG_LEVEL", "INFO").upper()
+    level_map = {
+        "CRITICAL": logging.CRITICAL,
+        "ERROR": logging.ERROR,
+        "WARNING": logging.WARNING,
+        "WARN": logging.WARNING,
+        "INFO": logging.INFO,
+        "DEBUG": logging.DEBUG,
+        "NOTSET": logging.NOTSET,
+    }
+    level = level_map.get(level_name, logging.INFO)
+
+    timestamper = structlog.processors.TimeStamper(fmt="iso", key="ts", utc=True)
+
+    logging.config.dictConfig(
+        {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "structlog": {
+                    "()": structlog.stdlib.ProcessorFormatter,
+                    "processors": [
+                        structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                        structlog.processors.JSONRenderer(),
+                    ],
+                    "foreign_pre_chain": [
+                        structlog.processors.add_log_level,
+                        timestamper,
+                    ],
+                }
+            },
+            "handlers": {
+                "default": {
+                    "class": "logging.StreamHandler",
+                    "formatter": "structlog",
+                    "stream": "ext://sys.stdout",
+                }
+            },
+            "loggers": {
+                "": {
+                    "handlers": ["default"],
+                    "level": level,
+                    "propagate": True,
+                }
+            },
+        }
+    )
+
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            timestamper,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.make_filtering_bound_logger(level),
+        cache_logger_on_first_use=True,
+    )
+
+    return structlog.get_logger("lpbot")
+
+
+base_log = configure_logging()
+log = base_log.bind(module="main")
 
 
 # ----------------------------
@@ -119,7 +188,7 @@ async def fetch_json_with_retries(
                         retry_after = None
             wait = (retry_after if retry_after is not None else base_backoff * (2 ** i)) + random.uniform(0, 0.2)
             if i == attempts - 1:
-                jlog("error", "http_failed", url=url, err=str(e))
+                log.error("http_failed", url=url, err=str(e))
                 return None
             await asyncio.sleep(wait)
     return None
@@ -177,19 +246,25 @@ async def decide_price(client: httpx.AsyncClient, spread_max_pct: float) -> Pric
     if cg is not None and cmc is not None:
         spread = pct_spread(cg, cmc)
         if spread > spread_max_pct:
-            jlog("warn", "divergence_guard", cg=cg, cmc=cmc, spread_pct=round(spread, 4), max_pct=spread_max_pct)
+            log.warning(
+                "divergence_guard",
+                cg=cg,
+                cmc=cmc,
+                spread_pct=round(spread, 4),
+                max_pct=spread_max_pct,
+            )
             return PriceDecision(None, None, cg, cmc, True)
         price = (cg + cmc) / 2.0
-        jlog("info", "price_ok_mid", cg=cg, cmc=cmc, spread_pct=round(spread, 4), price=price)
+        log.info("price_ok_mid", cg=cg, cmc=cmc, spread_pct=round(spread, 4), price=price)
         return PriceDecision(price, None, cg, cmc, False)
     elif cg is not None:
-        jlog("info", "price_ok_cg_only", cg=cg)
+        log.info("price_ok_cg_only", cg=cg)
         return PriceDecision(cg, "cg only", cg, None, False)
     elif cmc is not None:
-        jlog("info", "price_ok_cmc_only", cmc=cmc)
+        log.info("price_ok_cmc_only", cmc=cmc)
         return PriceDecision(cmc, "cmc only", None, cmc, False)
     else:
-        jlog("error", "price_unavailable")
+        log.error("price_unavailable")
         return PriceDecision(None, None, None, None, False)
 
 
@@ -211,7 +286,12 @@ async def process_breaches(price: float, src_label: Optional[str]) -> None:
 
         last = await repo.get_last_alert(name, side)
         if last is not None and (now_ts - last) < cooldown_secs:
-            jlog("info", "cooldown_skip", band=name, side=side, seconds_remaining=cooldown_secs - (now_ts - last))
+            log.info(
+                "cooldown_skip",
+                band=name,
+                side=side,
+                seconds_remaining=cooldown_secs - (now_ts - last),
+            )
             continue
 
         suggested = suggest_new_bands(price, bands, {name})
@@ -231,7 +311,7 @@ async def process_breaches(price: float, src_label: Optional[str]) -> None:
         sent += 1
 
     if sent == 0:
-        jlog("info", "no_breach", price=price, source=src_label)
+        log.info("no_breach", price=price, source=src_label)
 
 
 # ----------------------------
@@ -254,7 +334,7 @@ async def check_once() -> None:
             return  # already logged
         await process_breaches(decision.price, decision.label)
     except Exception as e:
-        jlog("error", "job_exception", err=str(e))
+        log.error("job_exception", err=str(e))
 
 
 # ----------------------------
@@ -267,10 +347,14 @@ async def lifespan(app: FastAPI):
 
     # open db connection and init
     db_conn = await aiosqlite.connect(DB_PATH)
-    repo = dbrepo(db_conn, jlog)
+    repo = dbrepo(db_conn, base_log.bind(module="db"))
     await repo.init(settings)
 
-    tg = telegramsvc(settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_CHAT_ID)
+    tg = telegramsvc(
+        settings.TELEGRAM_BOT_TOKEN,
+        settings.TELEGRAM_CHAT_ID,
+        logger=base_log.bind(module="telegram"),
+    )
     await tg.start(repo)
 
     # one httpx client (http/2), shared
@@ -288,28 +372,28 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=60 # small grace
     )
     scheduler.start()
-    jlog("info", "app_start", interval_min=settings.CHECK_EVERY_MINUTES)
+    log.info("app_start", interval_min=settings.CHECK_EVERY_MINUTES)
 
     try:
         yield
     finally:
         if scheduler:
             scheduler.shutdown(wait=False)
-            jlog("info", "scheduler_stopped")
+            log.info("scheduler_stopped")
             scheduler = None
         if tg:
             await tg.stop()
             tg = None
         if http_client:
             await http_client.aclose()
-            jlog("info", "http_client_closed")
+            log.info("http_client_closed")
             http_client = None
         if db_conn:
             await db_conn.close()
-            jlog("info", "db_closed")
+            log.info("db_closed")
             repo = None
             db_conn = None
-        jlog("info", "app_stop")
+        log.info("app_stop")
 
 
 app = FastAPI(lifespan=lifespan)
