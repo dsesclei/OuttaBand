@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -26,12 +26,14 @@ class TelegramSvc:
         self._repo: Optional[DBRepo] = None
         self._ready: asyncio.Event = asyncio.Event()
         self._pending: Dict[int, Tuple[str, Tuple[float, float]]] = {}
+        self._log: Optional[Callable[..., None]] = None
 
     async def start(self, repo: DBRepo) -> None:
         if self._app is not None:
             return
 
         self._repo = repo
+        self._log = getattr(repo, "_log", None)
         app = Application.builder().token(self._token).build()
         app.add_handler(CommandHandler("start", self._on_start))
         app.add_handler(CommandHandler("status", self._on_status))
@@ -68,6 +70,7 @@ class TelegramSvc:
         self._repo = None
         self._ready = asyncio.Event()
         self._pending.clear()
+        self._log = None
 
     async def send_text(self, text: str) -> None:
         app = self._ensure_app()
@@ -163,9 +166,6 @@ class TelegramSvc:
 
     async def _on_bands(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(chat_id=chat.id, text="unauthorized")
             return
         repo = self._ensure_repo()
         bands = await repo.get_bands()
@@ -214,8 +214,7 @@ class TelegramSvc:
             )
 
         mid = query.message.message_id if query.message else None
-        if mid is not None:
-            context.chat_data["await_exact"] = {"mid": mid, "band": band}
+        context.chat_data["await_exact"] = {"mid": mid, "band": band}
         await context.bot.send_message(
             chat_id=self._chat_id,
             text=f"enter low high for {band.upper()}",
@@ -368,6 +367,19 @@ class TelegramSvc:
                 chat_id=self._chat_id,
                 text=f"applied: {band} → {fmt_range(low, high)}",
             )
+
+        if self._log is not None:
+            try:
+                self._log("info", "bands_set_exact", band=band, low=low, high=high)
+            except Exception:
+                pass
+
+        bands = await repo.get_bands()
+        await context.bot.send_message(
+            chat_id=self._chat_id,
+            text=self._bands_menu_text(bands),
+            reply_markup=self._bands_menu_kb(),
+        )
 
         context.chat_data.pop("await_exact", None)
 
