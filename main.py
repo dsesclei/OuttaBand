@@ -12,7 +12,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import aiosqlite
 import httpx
@@ -22,6 +22,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from telegram import Bot
 
 from db_repo import DBRepo
+from band_logic import (
+    broken_bands,
+    format_alert_message,
+    suggest_new_bands_stub,
+)
 
 
 # ----------------------------
@@ -191,58 +196,27 @@ async def decide_price(client: httpx.AsyncClient, spread_max_pct: float) -> Pric
         return PriceDecision(None, None, None, None, False)
 
 
-# ----------------------------
-# Band logic
-# ----------------------------
-
-def fmt_price(x: float) -> str:
-    return f"{x:.2f}"
-
-def fmt_range(lo: float, hi: float) -> str:
-    return f"{fmt_price(lo)}–{fmt_price(hi)}"  # en dash
-
-def format_message(
-    band_name: str,
-    side: str,
-    price: float,
-    source_label: Optional[str],
-    bands: Dict[str, Tuple[float, float]],
-) -> str:
-    lines: List[str] = []
-    lines.append("◧ hard break")
-    lines.append(f"band: {band_name.upper()} ({side})")
-
-    price_line = f"price: {fmt_price(price)}"
-    if source_label:  # only show on single-source fallback
-        price_line += f" ({source_label})"
-    lines.append(price_line)
-
-    for name in sorted(bands.keys()):
-        lo, hi = bands[name]
-        lines.append(f"{name}: {fmt_range(lo, hi)}")
-    return "\n".join(lines)
-
 async def process_breaches(repo: DBRepo, price: float, src_label: Optional[str]) -> None:
     now_ts = int(time.time())
     bands = await repo.get_bands()
+    broken = broken_bands(price, bands)
+    if broken:
+        suggest_new_bands_stub(price, bands, broken)
     cooldown_secs = settings.COOLDOWN_MINUTES * 60
     sent = 0
 
     for name, (lo, hi) in bands.items():
-        side: Optional[str] = None
-        if price < lo:
-            side = "below"
-        elif price > hi:
-            side = "above"
-        if side is None:
+        if name not in broken:
             continue
+
+        side = "below" if price < lo else "above"
 
         last = await repo.get_last_alert(name, side)
         if last is not None and (now_ts - last) < cooldown_secs:
             jlog("info", "cooldown_skip", band=name, side=side, seconds_remaining=cooldown_secs - (now_ts - last))
             continue
 
-        text = format_message(name, side, price, src_label, bands)
+        text = format_alert_message(name, side, price, src_label, bands)
         await send_telegram(text)
         await repo.set_last_alert(name, side, now_ts)
         sent += 1
