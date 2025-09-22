@@ -21,6 +21,7 @@ class TelegramSvc:
         self._app: Optional[Application] = None
         self._repo: Optional[DBRepo] = None
         self._polling_task: Optional[asyncio.Task[None]] = None
+        self._ready: asyncio.Event = asyncio.Event()
 
     async def start(self, repo: DBRepo) -> None:
         if self._app is not None:
@@ -33,9 +34,11 @@ class TelegramSvc:
         app.add_handler(CallbackQueryHandler(self._on_callback))
 
         self._app = app
-        self._polling_task = asyncio.create_task(
-            app.run_polling(allowed_updates=None)
-        )
+        self._app = app
+        await app.initialize()
+        await app.start()
+        self._ready.set()
+        self._polling_task = asyncio.create_task(app.updater.start_polling())  # type: ignore[attr-defined]
 
     async def stop(self) -> None:
         if self._app is None:
@@ -54,9 +57,11 @@ class TelegramSvc:
         self._polling_task = None
         self._app = None
         self._repo = None
+        self._ready.clear()
 
     async def send_text(self, text: str) -> None:
         app = self._ensure_app()
+        await self._ready.wait()
         await app.bot.send_message(chat_id=self._chat_id, text=text)
 
     async def send_alert_with_buttons(
@@ -65,6 +70,7 @@ class TelegramSvc:
         buttons: list[list[InlineKeyboardButton]],
     ) -> None:
         app = self._ensure_app()
+        await self._ready.wait()
         markup = InlineKeyboardMarkup(buttons)
         await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=markup)
 
