@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from db_repo import dbrepo
-from band_logic import broken_bands, format_alert_message, suggest_new_bands_stub
+from band_logic import broken_bands, format_alert_message, suggest_new_bands
 from telegram_service import telegramsvc
 
 
@@ -201,7 +201,7 @@ async def process_breaches(price: float, src_label: Optional[str]) -> None:
     bands = await repo.get_bands()
     broken = broken_bands(price, bands)
     if broken:
-        suggest_new_bands_stub(price, bands, broken)
+        suggest_new_bands(price, bands, broken)
     cooldown_secs = settings.COOLDOWN_MINUTES * 60
     sent = 0
 

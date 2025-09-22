@@ -37,12 +37,12 @@ def broken_bands(p: float, bands: Dict[str, Tuple[float, float]]) -> Set[str]:
     return {name for name, (lo, hi) in bands.items() if p < lo or p > hi}
 
 
-def suggest_new_bands_stub(
+def suggest_new_bands(
     price: float,
     bands: Dict[str, Tuple[float, float]],
     broken: Set[str],
-) -> Optional[Dict[str, Tuple[float, float]]]:
-    from main import jlog  # local import to avoid circular dependency
-
-    jlog("info", "suggest_new_bands_stub", price=price, bands=len(bands), broken=sorted(broken))
-    return None
+) -> Dict[str, Tuple[float, float]]:
+    new_bands = dict(bands)
+    for name in broken:
+        new_bands[name] = (0.0, 1.0)
+    return new_bands

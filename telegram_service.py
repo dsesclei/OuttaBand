@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 
 from db_repo import DBRepo
+from band_logic import fmt_range
 
 
 class TelegramSvc:
@@ -33,7 +34,6 @@ class TelegramSvc:
         app.add_handler(CommandHandler("status", self._on_status))
         app.add_handler(CallbackQueryHandler(self._on_callback))
 
-        self._app = app
         self._app = app
         await app.initialize()
         await app.start()
@@ -101,7 +101,7 @@ class TelegramSvc:
             lines = ["Configured bands:"]
             for name in sorted(bands.keys()):
                 lo, hi = bands[name]
-                lines.append(f"{name}: {lo:.2f} – {hi:.2f}")
+                lines.append(f"{name}: {fmt_range(lo, hi)}")
             body = "\n".join(lines)
         await context.bot.send_message(chat_id=self._chat_id, text=body)
 
