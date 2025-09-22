@@ -19,14 +19,10 @@ import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from telegram import Bot
 
-from db_repo import DBRepo
-from band_logic import (
-    broken_bands,
-    format_alert_message,
-    suggest_new_bands_stub,
-)
+from db_repo import dbrepo
+from band_logic import broken_bands, format_alert_message, suggest_new_bands_stub
+from telegram_service import telegramsvc
 
 
 # ----------------------------
@@ -64,7 +60,8 @@ DB_PATH = "./app.db"
 
 http_client: Optional[httpx.AsyncClient] = None
 db_conn: Optional[aiosqlite.Connection] = None
-db_repo: Optional[DBRepo] = None
+repo: Optional[dbrepo] = None
+tg: Optional[telegramsvc] = None
 scheduler: Optional[AsyncIOScheduler] = None
 
 
@@ -196,7 +193,10 @@ async def decide_price(client: httpx.AsyncClient, spread_max_pct: float) -> Pric
         return PriceDecision(None, None, None, None, False)
 
 
-async def process_breaches(repo: DBRepo, price: float, src_label: Optional[str]) -> None:
+async def process_breaches(price: float, src_label: Optional[str]) -> None:
+    assert repo is not None, "db repo not initialized"
+    assert tg is not None, "telegram service not initialized"
+
     now_ts = int(time.time())
     bands = await repo.get_bands()
     broken = broken_bands(price, bands)
@@ -230,9 +230,10 @@ async def process_breaches(repo: DBRepo, price: float, src_label: Optional[str])
 # ----------------------------
 
 async def send_telegram(text: str) -> None:
+    if tg is None:
+        raise RuntimeError("telegram service not initialized")
     try:
-        async with Bot(settings.TELEGRAM_BOT_TOKEN) as bot:
-            await bot.send_message(chat_id=settings.TELEGRAM_CHAT_ID, text=text)
+        await tg.send_text(text)
         jlog("info", "telegram_sent", bytes=len(text))
     except Exception as e:
         jlog("error", "telegram_failed", err=str(e))
@@ -244,13 +245,14 @@ async def send_telegram(text: str) -> None:
 
 async def check_once() -> None:
     assert http_client is not None, "http client not initialized"
-    assert db_repo is not None, "db repo not initialized"
+    assert repo is not None, "db repo not initialized"
+    assert tg is not None, "telegram service not initialized"
 
     try:
         decision = await decide_price(http_client, settings.SPREAD_MAX_PCT)
         if decision.suspect or decision.price is None:
             return  # already logged
-        await process_breaches(db_repo, decision.price, decision.label)
+        await process_breaches(decision.price, decision.label)
     except Exception as e:
         jlog("error", "job_exception", err=str(e))
 
@@ -261,12 +263,15 @@ async def check_once() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, db_conn, db_repo, scheduler
+    global http_client, db_conn, repo, tg, scheduler
 
     # open db connection and init
     db_conn = await aiosqlite.connect(DB_PATH)
-    db_repo = DBRepo(db_conn)
-    await db_repo.init(settings)
+    repo = dbrepo(db_conn)
+    await repo.init(settings)
+
+    tg = telegramsvc(settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_CHAT_ID)
+    await tg.start(repo)
 
     # one httpx client (http/2), shared
     http_client = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
@@ -291,12 +296,19 @@ async def lifespan(app: FastAPI):
         if scheduler:
             scheduler.shutdown(wait=False)
             jlog("info", "scheduler_stopped")
+            scheduler = None
+        if tg:
+            await tg.stop()
+            tg = None
         if http_client:
             await http_client.aclose()
             jlog("info", "http_client_closed")
+            http_client = None
         if db_conn:
             await db_conn.close()
             jlog("info", "db_closed")
+            repo = None
+            db_conn = None
         jlog("info", "app_stop")
 
 

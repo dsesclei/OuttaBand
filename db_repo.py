@@ -108,3 +108,6 @@ class DBRepo:
         from main import jlog  # imported lazily to avoid circular import
 
         jlog(level, event, **kwargs)
+
+
+dbrepo = DBRepo
