@@ -24,7 +24,6 @@ class TelegramSvc:
         self._chat_id = chat_id
         self._app: Optional[Application] = None
         self._repo: Optional[DBRepo] = None
-        self._polling_task: Optional[asyncio.Task[None]] = None
         self._ready: asyncio.Event = asyncio.Event()
         self._pending: Dict[int, Tuple[str, Tuple[float, float]]] = {}
 
@@ -41,26 +40,27 @@ class TelegramSvc:
         app.add_handler(CallbackQueryHandler(self._on_callback))
 
         self._app = app
+        await app.initialize()
+        await app.start()
+        if app.updater is not None:
+            await app.updater.start_polling(drop_pending_updates=True)
+        else:
+            raise RuntimeError("Application updater not available; cannot start polling")
         self._ready.set()
-        self._polling_task = asyncio.create_task(
-            app.run_polling(
-                allowed_updates=["message", "callback_query"],
-                drop_pending_updates=True,
-                stop_signals=None,
-            )
-        )
 
     async def stop(self) -> None:
         if self._app is None:
             return
 
+        try:
+            if self._app.updater is not None:
+                await self._app.updater.stop()
+        except Exception:
+            pass
+
         await self._app.stop()
         await self._app.shutdown()
 
-        if self._polling_task is not None:
-            await self._polling_task
-
-        self._polling_task = None
         self._app = None
         self._repo = None
         self._ready = asyncio.Event()
