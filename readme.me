@@ -1,0 +1,19 @@
+# sol/usdc band watcher — mvp
+
+tiny async service that pings coingecko + coinmarketcap on an interval, applies a divergence guard, computes a midpoint (or single-source fallback), and dms a telegram chat when price breaks configured bands a/b/c. strict outbound-only. one http endpoint: `GET /healthz` → `{"ok": true}`.
+
+## stack
+- fastapi (single `/healthz`)
+- apscheduler (asyncio) with jitter/coalesce/misfire guards
+- python-telegram-bot (v21, async-only)
+- httpx (http/2, retries/backoff)
+- aiosqlite (sqlite)
+- pydantic-settings (v2) for env
+
+## install & run
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # fill in values
+uvicorn main:app --host 0.0.0.0 --port 8000
