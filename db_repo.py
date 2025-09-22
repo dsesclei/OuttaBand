@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Callable, Dict, Optional, Tuple, TYPE_CHECKING
 
 import aiosqlite
 
@@ -30,8 +30,9 @@ class DBRepo:
         ("c", 0.0, 100.0),
     )
 
-    def __init__(self, conn: aiosqlite.Connection) -> None:
+    def __init__(self, conn: aiosqlite.Connection, logger: Callable[..., None]) -> None:
         self._conn = conn
+        self._log: Callable[..., None] = logger
 
     async def init(self, settings: "Settings") -> None:
         await self._conn.executescript(self.CREATE_TABLES_SQL)
@@ -102,12 +103,5 @@ class DBRepo:
             return (lo, hi)
         except Exception:
             return None
-
-    @staticmethod
-    def _log(level: str, event: str, **kwargs: object) -> None:
-        from main import jlog  # imported lazily to avoid circular import
-
-        jlog(level, event, **kwargs)
-
 
 dbrepo = DBRepo

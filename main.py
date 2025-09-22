@@ -267,7 +267,7 @@ async def lifespan(app: FastAPI):
 
     # open db connection and init
     db_conn = await aiosqlite.connect(DB_PATH)
-    repo = dbrepo(db_conn)
+    repo = dbrepo(db_conn, jlog)
     await repo.init(settings)
 
     tg = telegramsvc(settings.TELEGRAM_BOT_TOKEN, settings.TELEGRAM_CHAT_ID)
