@@ -44,20 +44,20 @@ class TelegramSvc:
         if self._app is None:
             return
 
+        updater = getattr(self._app, "updater", None)
+        if updater is not None:
+            await updater.stop()  # type: ignore[attr-defined]
+
         await self._app.stop()
         await self._app.shutdown()
 
         if self._polling_task is not None:
-            self._polling_task.cancel()
-            try:
-                await self._polling_task
-            except asyncio.CancelledError:
-                pass
+            await self._polling_task
 
         self._polling_task = None
         self._app = None
         self._repo = None
-        self._ready.clear()
+        self._ready = asyncio.Event()
 
     async def send_text(self, text: str) -> None:
         app = self._ensure_app()
