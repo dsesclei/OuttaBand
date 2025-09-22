@@ -35,8 +35,11 @@ class TelegramSvc:
         app = Application.builder().token(self._token).build()
         app.add_handler(CommandHandler("start", self._on_start))
         app.add_handler(CommandHandler("status", self._on_status))
+        app.add_handler(CommandHandler("bands", self._on_bands))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text_any))
         app.add_handler(CallbackQueryHandler(self._on_alert_action, pattern=r"^alert:(accept|ignore|set):[abc]$"))
+        app.add_handler(CallbackQueryHandler(self._on_bands_pick, pattern=r"^b:[abc]$"))
+        app.add_handler(CallbackQueryHandler(self._on_bands_back, pattern=r"^b:back$"))
         app.add_handler(CallbackQueryHandler(self._on_callback))
 
         self._app = app
@@ -139,6 +142,108 @@ class TelegramSvc:
                 lines.append(f"{name}: {fmt_range(lo, hi)}")
             body = "\n".join(lines)
         await context.bot.send_message(chat_id=self._chat_id, text=body)
+
+    def _bands_menu_text(self, bands: Dict[str, Tuple[float, float]]) -> str:
+        if not bands:
+            return "(no bands configured)"
+        lines = ["configured bands:"]
+        for name in sorted(bands.keys()):
+            lo, hi = bands[name]
+            lines.append(f"{name}: {fmt_range(lo, hi)}")
+        return "\n".join(lines)
+
+    def _bands_menu_kb(self) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("edit a", callback_data="b:a")],
+                [InlineKeyboardButton("edit b", callback_data="b:b")],
+                [InlineKeyboardButton("edit c", callback_data="b:c")],
+            ]
+        )
+
+    async def _on_bands(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_authorized(update):
+            chat = update.effective_chat
+            if chat is not None:
+                await context.bot.send_message(chat_id=chat.id, text="unauthorized")
+            return
+        repo = self._ensure_repo()
+        bands = await repo.get_bands()
+        text = self._bands_menu_text(bands)
+        await context.bot.send_message(
+            chat_id=self._chat_id,
+            text=text,
+            reply_markup=self._bands_menu_kb(),
+        )
+
+    async def _on_bands_pick(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query is None:
+            return
+        if not self._is_authorized(update):
+            await query.answer("unauthorized", show_alert=True)
+            return
+
+        data = query.data or ""
+        parts = data.split(":")
+        if len(parts) != 2:
+            await query.answer()
+            return
+
+        band = parts[1]
+        repo = self._ensure_repo()
+        bands = await repo.get_bands()
+        current = bands.get(band)
+        if current is None:
+            await query.answer("unknown band", show_alert=True)
+            return
+
+        editor_text = (
+            f"◧ edit band {band.upper()}\n"
+            f"current: {fmt_range(*current)}\n"
+            "send \"low high\" or tap back"
+        )
+        back_markup = InlineKeyboardMarkup([[InlineKeyboardButton("back", callback_data="b:back")]])
+        try:
+            await query.edit_message_text(editor_text, reply_markup=back_markup)
+        except Exception:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text=editor_text,
+                reply_markup=back_markup,
+            )
+
+        mid = query.message.message_id if query.message else None
+        if mid is not None:
+            context.chat_data["await_exact"] = {"mid": mid, "band": band}
+        await context.bot.send_message(
+            chat_id=self._chat_id,
+            text=f"enter low high for {band.upper()}",
+            reply_markup=ForceReply(selective=True, input_field_placeholder="low high"),
+        )
+
+    async def _on_bands_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query is None:
+            return
+        if not self._is_authorized(update):
+            await query.answer("unauthorized", show_alert=True)
+            return
+
+        repo = self._ensure_repo()
+        bands = await repo.get_bands()
+        await query.answer()
+        try:
+            await query.edit_message_text(
+                self._bands_menu_text(bands),
+                reply_markup=self._bands_menu_kb(),
+            )
+        except Exception:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text=self._bands_menu_text(bands),
+                reply_markup=self._bands_menu_kb(),
+            )
 
     async def _on_alert_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
