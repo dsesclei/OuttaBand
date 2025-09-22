@@ -75,11 +75,17 @@ class TelegramSvc:
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update):
+            chat = update.effective_chat
+            if chat is not None:
+                await context.bot.send_message(chat_id=chat.id, text="unauthorized")
             return
         await context.bot.send_message(chat_id=self._chat_id, text="Watcher online. Use /status for bands.")
 
     async def _on_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update):
+            chat = update.effective_chat
+            if chat is not None:
+                await context.bot.send_message(chat_id=chat.id, text="unauthorized")
             return
         repo = self._ensure_repo()
         bands = await repo.get_bands()
@@ -97,7 +103,7 @@ class TelegramSvc:
         if update.callback_query is None:
             return
         if not self._is_authorized(update):
-            await update.callback_query.answer()
+            await update.callback_query.answer("unauthorized", show_alert=True)
             return
         await update.callback_query.answer()
 
