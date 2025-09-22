@@ -109,16 +109,6 @@ class TelegramSvc:
         )
         self._pending[message.message_id] = (band, suggested_range)
 
-    async def send_alert_with_buttons(
-        self,
-        text: str,
-        buttons: list[list[InlineKeyboardButton]],
-    ) -> None:
-        app = self._ensure_app()
-        await self._ready.wait()
-        markup = InlineKeyboardMarkup(buttons)
-        await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=markup)
-
     def _ensure_app(self) -> Application:
         if self._app is None:
             raise RuntimeError("Telegram service has not been started")

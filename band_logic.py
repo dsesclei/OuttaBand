@@ -44,5 +44,5 @@ def suggest_new_bands(
 ) -> Dict[str, Tuple[float, float]]:
     new_bands = dict(bands)
     for name in broken:
-        new_bands[name] = (0.0, 1.0)
+        new_bands[name] = (price * 0.996, price * 1.004)
     return new_bands

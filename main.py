@@ -238,15 +238,6 @@ async def process_breaches(price: float, src_label: Optional[str]) -> None:
 # Telegram
 # ----------------------------
 
-async def send_telegram(text: str) -> None:
-    if tg is None:
-        raise RuntimeError("telegram service not initialized")
-    try:
-        await tg.send_text(text)
-        jlog("info", "telegram_sent", bytes=len(text))
-    except Exception as e:
-        jlog("error", "telegram_failed", err=str(e))
-
 
 # ----------------------------
 # Scheduler job
