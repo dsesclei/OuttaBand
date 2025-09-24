@@ -6,7 +6,7 @@ recommendations, range building, and simple quantisation.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 
 _BUCKET_WIDTHS: Dict[str, Dict[str, float]] = {
@@ -36,6 +36,7 @@ def widths_for_bucket(bucket: str) -> Tuple[Dict[str, float], bool]:
     indicates whether band ``"a"`` should be skipped by default for the bucket.
     Currently only the ``"high"`` bucket sets ``skip_a`` to ``True`` so callers
     can opt-in when they truly need band ``a`` during elevated volatility.
+    Width values are stored as fractions of price (e.g. ``0.006`` == ``0.6%``).
     """
 
     if bucket not in _BUCKET_WIDTHS:
@@ -92,7 +93,7 @@ def build_advisory(
     bucket: str,
     *,
     include_a_on_high: bool = False,
-) -> Dict[str, object]:
+) -> Dict[str, Any]:
     """Construct a structured advisory payload for the supplied state.
 
     The payload keeps all inputs plus the derived policy pieces so downstream

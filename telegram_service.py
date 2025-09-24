@@ -103,7 +103,7 @@ class TelegramSvc:
         await app.bot.send_message(chat_id=self._chat_id, text=text)
 
     async def send_advisory_card(
-        self, advisory: Dict[str, object], drift_line: Optional[str] = None
+        self, advisory: Dict[str, Any], drift_line: Optional[str] = None
     ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
@@ -111,8 +111,8 @@ class TelegramSvc:
         price = float(advisory["price"])
         sigma_pct = cast(Optional[float], advisory.get("sigma_pct"))
         bucket = str(advisory["bucket"])
-        split = cast(Tuple[int, int, int], advisory["split"])
-        ranges = cast(Dict[str, Tuple[float, float]], advisory["ranges"])
+        split = cast(Tuple[int, int, int], cast(Any, advisory["split"]))
+        ranges = cast(Dict[str, Tuple[float, float]], cast(Any, advisory["ranges"]))
 
         text = format_advisory_card(
             price,
