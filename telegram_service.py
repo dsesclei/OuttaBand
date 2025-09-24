@@ -216,7 +216,7 @@ class TelegramSvc:
             bucket = sigma.get("bucket")
             stale = bool(sigma.get("stale"))
             if sigma_pct is not None and math.isfinite(float(sigma_pct)) and bucket:
-                sigma_line = f"σ={float(sigma_pct):.1f}% ({bucket})"
+                sigma_line = f"σ={float(sigma_pct):.2f}% ({bucket})"
                 if stale:
                     sigma_line += " (STALE)"
                 lines.append(sigma_line)
@@ -231,7 +231,7 @@ class TelegramSvc:
 
         if price is not None and math.isfinite(price) and price > 0 and baseline and latest:
             base_sol, base_usdc, _ = baseline
-            snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
+            _snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
             base_val_now = max(base_sol, 0.0) * price + max(base_usdc, 0.0)
             cur_val_now = max(snap_sol, 0.0) * price + max(snap_usdc, 0.0)
             if math.isfinite(base_val_now) and math.isfinite(cur_val_now):
@@ -241,7 +241,7 @@ class TelegramSvc:
                     if not math.isfinite(drift_pct):
                         drift_pct = 0.0
                     lines.append(
-                        f"drift now: ${drift_now:.2f} ({drift_pct * 100:.2f}%)"
+                        f"drift now: ${drift_now:.2f} ({drift_pct * 100:+.2f}%)"
                     )
                 else:
                     lines.append("drift now: unavailable")
@@ -364,7 +364,7 @@ class TelegramSvc:
         await context.bot.send_message(
             chat_id=self._chat_id,
             text=(
-                f"drift: ${drift:.2f} ({drift_pct * 100:.2f}%) | "
+                f"drift: ${drift:.2f} ({drift_pct * 100:+.2f}%) | "
                 f"base ${base_val:.2f} → now ${cur_val:.2f} @ p={price:.2f}"
             ),
         )
