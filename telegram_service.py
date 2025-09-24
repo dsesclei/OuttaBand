@@ -283,7 +283,9 @@ class TelegramSvc:
             lines.append("(none)")
 
         split = split_for_sigma(sigma_pct_value)
-        lines.append(f"advisory split: {split[0]}/{split[1]}/{split[2]}")
+        lines.append(
+            f"advisory split ({sigma_bucket}): {split[0]}/{split[1]}/{split[2]}"
+        )
 
         if price is not None and math.isfinite(price) and price > 0 and baseline and latest:
             base_sol, base_usdc, _ = baseline
