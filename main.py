@@ -407,6 +407,8 @@ async def lifespan(app: FastAPI):
         logger=base_log.bind(module="telegram"),
     )
     await tg.start(repo)
+    tg.set_price_provider(lambda: decide_price(http_client))
+    tg.set_sigma_provider(get_sigma_reading)
 
     # one httpx client (http/2), shared
     http_client = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
