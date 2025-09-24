@@ -199,16 +199,60 @@ class TelegramSvc:
                 await context.bot.send_message(chat_id=chat.id, text="unauthorized")
             return
         repo = self._ensure_repo()
+        price = await self._get_price()
+        sigma = await self._get_sigma()
         bands = await repo.get_bands()
-        if not bands:
-            body = "(no bands configured)"
+        latest = await repo.get_latest_snapshot()
+        baseline = await repo.get_baseline()
+
+        lines = []
+        if price is not None and math.isfinite(price):
+            lines.append(f"p={price:.2f}")
         else:
-            lines = ["Configured bands:"]
+            lines.append("p=unknown")
+
+        if sigma:
+            sigma_pct = sigma.get("sigma_pct")
+            bucket = sigma.get("bucket")
+            stale = bool(sigma.get("stale"))
+            if sigma_pct is not None and math.isfinite(float(sigma_pct)) and bucket:
+                sigma_line = f"σ={float(sigma_pct):.1f}% ({bucket})"
+                if stale:
+                    sigma_line += " (STALE)"
+                lines.append(sigma_line)
+
+        lines.append("bands:")
+        if bands:
             for name in sorted(bands.keys()):
                 lo, hi = bands[name]
                 lines.append(f"{name}: {fmt_range(lo, hi)}")
-            body = "\n".join(lines)
-        await context.bot.send_message(chat_id=self._chat_id, text=body)
+        else:
+            lines.append("(none)")
+
+        if price is not None and math.isfinite(price) and price > 0 and baseline and latest:
+            base_sol, base_usdc, _ = baseline
+            snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
+            base_val_now = max(base_sol, 0.0) * price + max(base_usdc, 0.0)
+            cur_val_now = max(snap_sol, 0.0) * price + max(snap_usdc, 0.0)
+            if math.isfinite(base_val_now) and math.isfinite(cur_val_now):
+                drift_now = cur_val_now - base_val_now
+                if math.isfinite(drift_now):
+                    drift_pct = (drift_now / base_val_now) if base_val_now > 0 else 0.0
+                    if not math.isfinite(drift_pct):
+                        drift_pct = 0.0
+                    lines.append(
+                        f"drift now: ${drift_now:.2f} ({drift_pct * 100:.2f}%)"
+                    )
+                else:
+                    lines.append("drift now: unavailable")
+            else:
+                lines.append("drift now: unavailable")
+        elif latest:
+            _snap_ts, _snap_sol, _snap_usdc, snap_price, snap_drift = latest
+            if math.isfinite(snap_price) and math.isfinite(snap_drift):
+                lines.append(f"drift (last @ {snap_price:.2f}): ${snap_drift:.2f}")
+
+        await context.bot.send_message(chat_id=self._chat_id, text="\n".join(lines))
 
     async def _on_setbaseline(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update):
