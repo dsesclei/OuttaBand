@@ -356,6 +356,9 @@ async def check_once() -> None:
         price = await decide_price(http_client)
         if price is None:
             return
+        if not math.isfinite(price) or price <= 0:
+            log.warning("advisory_price_invalid", price=price)
+            return
         sigma = await get_sigma_reading()
         log_kwargs = {
             "sigma_pct": round(sigma["sigma_pct"], 3) if sigma else None,
@@ -383,8 +386,13 @@ async def send_daily_advisory() -> None:
         price = await decide_price(http_client)
         if price is None:
             return
+        if not math.isfinite(price) or price <= 0:
+            log.warning("advisory_price_invalid", price=price)
+            return
 
         sigma = await get_sigma_reading()
+        if sigma is None:
+            log.warning("sigma_miss_daily")
         bucket = (sigma.get("bucket") if sigma else None) or "mid"
         sigma_pct_raw = sigma.get("sigma_pct") if sigma else None
 
