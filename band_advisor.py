@@ -90,12 +90,15 @@ def build_advisory(
     price: float,
     sigma_pct: Optional[float],
     bucket: str,
+    *,
+    include_a_on_high: bool = False,
 ) -> Dict[str, object]:
     """Construct a structured advisory payload for the supplied state.
 
     The payload keeps all inputs plus the derived policy pieces so downstream
     consumers (e.g. Telegram formatting, HTTP responses) can reuse the same
-    data without needing to recompute anything.
+    data without needing to recompute anything. Callers can opt in to include
+    band ``"a"`` during ``"high"`` bucket volatility via ``include_a_on_high``.
     """
 
     return {
@@ -106,6 +109,6 @@ def build_advisory(
         "ranges": ranges_for_price(
             price,
             bucket,
-            include_a_on_high=False,
+            include_a_on_high=include_a_on_high,
         ),
     }

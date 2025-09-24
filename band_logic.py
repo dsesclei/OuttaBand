@@ -78,7 +78,7 @@ def format_advisory_card(
 ) -> str:
     sigma_display = "–"
     if sigma_pct is not None:
-        sigma_display = f"{sigma_pct:.1f}%"
+        sigma_display = f"{sigma_pct:.2f}%"
     if stale:
         sigma_display = f"{sigma_display} (STALE)"
 
@@ -96,7 +96,7 @@ def format_advisory_card(
         width = widths.get(name)
         if width is None:
             continue
-        pct_display = f"±{width * 100:.1f}%"
+        pct_display = f"±{width * 100:.2f}%"
         lines.append(f"{name} {pct_display} : {fmt_range(lo, hi)}")
 
     return "\n".join(lines)
