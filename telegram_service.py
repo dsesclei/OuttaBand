@@ -148,6 +148,7 @@ class TelegramSvc:
         src_label: Optional[str],
         bands: dict[str, Tuple[float, float]],
         suggested_range: Tuple[float, float],
+        policy_meta: Optional[Tuple[str, float]] = None,
     ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
@@ -165,6 +166,9 @@ class TelegramSvc:
             f"current {band}: {fmt_range(*current)}\n"
             f"suggested {band}: {fmt_range(*suggested_range)}"
         )
+        if policy_meta is not None:
+            bucket, width = policy_meta
+            text = f"{text}\npolicy: {bucket} (±{width * 100:.2f}%)"
         buttons = [
             [
                 InlineKeyboardButton("accept", callback_data=f"alert:accept:{band}"),

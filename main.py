@@ -274,6 +274,7 @@ async def process_breaches(
         effective_bucket,
         include_a_on_high=False,
     )
+    widths, _ = band_advisor.widths_for_bucket(effective_bucket)
     for name, (lo, hi) in bands.items():
         if name not in broken:
             continue
@@ -311,12 +312,14 @@ async def process_breaches(
             suggested_lo=rng[0],
             suggested_hi=rng[1],
         )
+        width = widths.get(name)
         await tg.send_breach_offer(
             band=name,
             price=price,
             src_label=src_label,
             bands=bands,
             suggested_range=rng,
+            policy_meta=(effective_bucket, width) if width is not None else None,
         )
         await repo.set_last_alert(name, side, now_ts)
         sent += 1
