@@ -12,7 +12,6 @@ import os
 import random
 import time
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Dict, Optional
 
@@ -37,12 +36,10 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_CHAT_ID: int
 
-    CMC_API_KEY: Optional[str] = None
-    CG_API_KEY: Optional[str] = None
+    METEORA_PAIR_ADDRESS: str
 
     CHECK_EVERY_MINUTES: int = 15
     COOLDOWN_MINUTES: int = 60
-    SPREAD_MAX_PCT: float = 0.5
 
     # Optional band seeds (low-high). If provided, they will be upserted at startup.
     BAND_A: Optional[str] = None
@@ -198,77 +195,35 @@ async def fetch_json_with_retries(
 # Price fetchers + decision
 # ----------------------------
 
-async def fetch_cg_price_usd(client: httpx.AsyncClient, api_key: Optional[str]) -> Optional[float]:
-    if not api_key:
+async def fetch_meteora_price(client: httpx.AsyncClient, pair_address: str) -> Optional[float]:
+    url = f"https://dlmm-api.meteora.ag/pair/{pair_address}"
+    data = await fetch_json_with_retries(client, "GET", url)
+    if data is None:
         return None
-    url = "https://api.coingecko.com/api/v3/simple/price"
-    headers: Dict[str, str] = {"x-cg-demo-api-key": api_key}
-    params = {"ids": "solana", "vs_currencies": "usd"}
-    data = await fetch_json_with_retries(client, "GET", url, headers=headers, params=params)
+
     try:
-        val = float(data["solana"]["usd"])
-        return val if math.isfinite(val) and val > 0 else None
+        raw = data["current_price"]
+        price = float(raw)
     except Exception:
         return None
 
-async def fetch_cmc_price_usd(client: httpx.AsyncClient, api_key: Optional[str]) -> Optional[float]:
-    if not api_key:
-        return None
-    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
-    headers = {"X-CMC_PRO_API_KEY": api_key, "Accept": "application/json"}
-    params = {"symbol": "SOL", "convert": "USD"}  # returns data["SOL"]["quote"]["USD"]["price"]
-    data = await fetch_json_with_retries(client, "GET", url, headers=headers, params=params)
-    try:
-        val = float(data["data"]["SOL"]["quote"]["USD"]["price"])
-        return val if math.isfinite(val) and val > 0 else None
-    except Exception:
+    if not math.isfinite(price) or price <= 0:
         return None
 
-def pct_spread(a: float, b: float) -> float:
-    mid = (a + b) / 2.0
-    if mid == 0:
-        return float("inf")
-    return abs(a - b) / mid * 100.0
-
-@dataclass
-class PriceDecision:
-    price: Optional[float]
-    label: Optional[str]
-    cg: Optional[float]
-    cmc: Optional[float]
-    suspect: bool  # true means both sources present but divergence > threshold
-
-async def decide_price(client: httpx.AsyncClient, spread_max_pct: float) -> PriceDecision:
-    cg_task = asyncio.create_task(fetch_cg_price_usd(client, settings.CG_API_KEY))
-    cmc_task = asyncio.create_task(fetch_cmc_price_usd(client, settings.CMC_API_KEY))
-    cg, cmc = await asyncio.gather(cg_task, cmc_task)
-
-    if cg is not None and cmc is not None:
-        spread = pct_spread(cg, cmc)
-        if spread > spread_max_pct:
-            log.warning(
-                "divergence_guard",
-                cg=cg,
-                cmc=cmc,
-                spread_pct=round(spread, 4),
-                max_pct=spread_max_pct,
-            )
-            return PriceDecision(None, None, cg, cmc, True)
-        price = (cg + cmc) / 2.0
-        log.info("price_ok_mid", cg=cg, cmc=cmc, spread_pct=round(spread, 4), price=price)
-        return PriceDecision(price, None, cg, cmc, False)
-    elif cg is not None:
-        log.info("price_ok_cg_only", cg=cg)
-        return PriceDecision(cg, "cg only", cg, None, False)
-    elif cmc is not None:
-        log.info("price_ok_cmc_only", cmc=cmc)
-        return PriceDecision(cmc, "cmc only", None, cmc, False)
-    else:
-        log.error("price_unavailable")
-        return PriceDecision(None, None, None, None, False)
+    return price
 
 
-async def process_breaches(price: float, src_label: Optional[str]) -> None:
+async def decide_price(client: httpx.AsyncClient) -> Optional[float]:
+    price = await fetch_meteora_price(client, settings.METEORA_PAIR_ADDRESS)
+    if price is None:
+        log.error("price_unavailable", source="meteora")
+        return None
+
+    log.info("price_ok", source="meteora", price=price)
+    return price
+
+
+async def process_breaches(price: float, src_label: str) -> None:
     assert repo is not None, "db repo not initialized"
     assert tg is not None, "telegram service not initialized"
 
@@ -329,10 +284,10 @@ async def check_once() -> None:
     assert tg is not None, "telegram service not initialized"
 
     try:
-        decision = await decide_price(http_client, settings.SPREAD_MAX_PCT)
-        if decision.suspect or decision.price is None:
-            return  # already logged
-        await process_breaches(decision.price, decision.label)
+        price = await decide_price(http_client)
+        if price is None:
+            return
+        await process_breaches(price, "meteora")
     except Exception as e:
         log.error("job_exception", err=str(e))
 

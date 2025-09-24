@@ -1,6 +1,6 @@
 # sol/usdc band watcher — mvp
 
-tiny async service that pings coingecko + coinmarketcap on an interval, applies a divergence guard, computes a midpoint (or single-source fallback), and dms a telegram chat when price breaks configured bands a/b/c. strict outbound-only. one http endpoint: `GET /healthz` → `{"ok": true}`.
+tiny async service that pulls the Meteora DLMM pool price on an interval and DMs a telegram chat when price breaks configured bands a/b/c. strict outbound-only. one http endpoint: `GET /healthz` → `{"ok": true}`.
 
 ## stack
 - fastapi (single `/healthz`)
