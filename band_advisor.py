@@ -6,7 +6,7 @@ recommendations, range building, and simple quantisation.
 """
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 
 _BUCKET_WIDTHS: Dict[str, Dict[str, float]] = {
@@ -91,3 +91,28 @@ def quantize(value: float, dp: int = 2) -> float:
     """Round ``value`` to ``dp`` decimal places using the built-in ``round``."""
 
     return round(value, dp)
+
+
+def build_advisory(
+    price: float,
+    sigma_pct: Optional[float],
+    bucket: str,
+) -> Dict[str, object]:
+    """Construct a structured advisory payload for the supplied state.
+
+    The payload keeps all inputs plus the derived policy pieces so downstream
+    consumers (e.g. Telegram formatting, HTTP responses) can reuse the same
+    data without needing to recompute anything.
+    """
+
+    return {
+        "price": price,
+        "sigma_pct": sigma_pct,
+        "bucket": bucket,
+        "split": split_for_sigma(sigma_pct),
+        "ranges": ranges_for_price(
+            price,
+            bucket,
+            include_a_on_high=False,
+        ),
+    }
