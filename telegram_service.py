@@ -62,6 +62,8 @@ class TelegramSvc:
         app.add_handler(CommandHandler("status", self._on_status))
         app.add_handler(CommandHandler("bands", self._on_bands))
         app.add_handler(CommandHandler("setbaseline", self._on_setbaseline))
+        app.add_handler(CommandHandler("setnotional", self._on_setnotional))
+        app.add_handler(CommandHandler("settilt", self._on_settilt))
         app.add_handler(CommandHandler("updatebalances", self._on_updatebalances))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text_any))
         app.add_handler(CallbackQueryHandler(self._on_alert_action, pattern=r"^alert:(accept|ignore|set):[abc]$"))
@@ -253,6 +255,8 @@ class TelegramSvc:
             "<code>/status</code> — latest price, σ, bands, policy split",
             "<code>/bands</code> — edit band ranges",
             "<code>/setbaseline &lt;sol&gt; sol &lt;usdc&gt; usdc</code>",
+            "<code>/setnotional &lt;usd&gt;</code> — total usd to allocate across bands",
+            "<code>/settilt &lt;sol&gt;:&lt;usdc&gt;</code> — inside-band split, sol first (e.g. 50:50, 60:40)",
             "<code>/updatebalances &lt;sol&gt; sol &lt;usdc&gt; usdc</code>",
             "<code>/help</code> — show this list",
         ]
@@ -503,6 +507,115 @@ class TelegramSvc:
                 f"[<i>Applied</i>] <b>Drift</b>: ${drift:+.2f} ({drift_pct * 100:+.2f}%) | "
                 f"<b>Base</b> ${base_val:.2f} → <b>Now</b> ${cur_val:.2f} @ "
                 f"Price <b>{price:.2f}</b>"
+            ),
+            parse_mode="HTML",
+        )
+
+    async def _on_setnotional(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_authorized(update):
+            chat = update.effective_chat
+            if chat is not None:
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text="[<i>Unauthorized</i>]",
+                    parse_mode="HTML",
+                )
+            return
+
+        message = update.message
+        text = message.text if message and message.text else ""
+        value = self._parse_first_number(text)
+        if value is None or not math.isfinite(value) or value < 0:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="[<i>Usage</i>] <code>/setnotional &lt;usd&gt;</code> (e.g. <code>/setnotional 2500</code>)",
+                parse_mode="HTML",
+            )
+            return
+
+        repo = self._ensure_repo()
+        try:
+            await repo.set_notional_usd(float(value))
+        except ValueError:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="[<i>Error</i>] Notional must be finite and non-negative.",
+                parse_mode="HTML",
+            )
+            return
+
+        await context.bot.send_message(
+            chat_id=self._chat_id,
+            text=f"[<i>Applied</i>] Notional → ${float(value):.2f}",
+            parse_mode="HTML",
+        )
+
+    async def _on_settilt(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_authorized(update):
+            chat = update.effective_chat
+            if chat is not None:
+                await context.bot.send_message(
+                    chat_id=chat.id,
+                    text="[<i>Unauthorized</i>]",
+                    parse_mode="HTML",
+                )
+            return
+
+        message = update.message
+        text = message.text if message and message.text else ""
+        parsed = self._parse_tilt_sol_usdc(text)
+        if parsed is None:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text=(
+                    "[<i>Usage</i>] <code>/settilt &lt;sol&gt;:&lt;usdc&gt;</code> "
+                    "(e.g. <code>/settilt 60:40</code> or <code>/settilt 0.6</code>)"
+                ),
+                parse_mode="HTML",
+            )
+            return
+
+        sol_frac, usdc_frac = parsed
+        if not (math.isfinite(sol_frac) and math.isfinite(usdc_frac)):
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="[<i>Error</i>] Invalid tilt values.",
+                parse_mode="HTML",
+            )
+            return
+
+        total = sol_frac + usdc_frac
+        if total <= 0:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="[<i>Error</i>] Tilt must allocate some share to SOL or USDC.",
+                parse_mode="HTML",
+            )
+            return
+
+        sol_frac = min(max(sol_frac, 0.0), 1.0)
+        usdc_frac = min(max(usdc_frac, 0.0), 1.0)
+        total = sol_frac + usdc_frac
+        if total == 0:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="[<i>Error</i>] Tilt must allocate some share to SOL or USDC.",
+                parse_mode="HTML",
+            )
+            return
+
+        sol_frac /= total
+        usdc_frac /= total
+
+        repo = self._ensure_repo()
+        await repo.set_tilt_sol_frac(sol_frac)
+
+        sol_pct = self._format_pct(sol_frac)
+        usdc_pct = self._format_pct(usdc_frac)
+        await context.bot.send_message(
+            chat_id=self._chat_id,
+            text=(
+                f"[<i>Applied</i>] Tilt → SOL/USDC = {escape(sol_pct)}/{escape(usdc_pct)}"
             ),
             parse_mode="HTML",
         )
@@ -917,6 +1030,80 @@ class TelegramSvc:
         )
 
         context.chat_data.pop("await_exact", None)
+
+    def _parse_first_number(self, text: str) -> Optional[float]:
+        tokens = text.split()
+        for token in tokens:
+            if token.startswith("/"):
+                continue
+            try:
+                candidate = float(token.replace(",", ""))
+            except ValueError:
+                continue
+            if math.isfinite(candidate):
+                return candidate
+        return None
+
+    def _parse_tilt_sol_usdc(self, text: str) -> Optional[Tuple[float, float]]:
+        normalized = text.replace(":", " ").replace("/", " ")
+        tokens = normalized.split()
+        numbers: list[float] = []
+        for token in tokens:
+            if token.startswith("/"):
+                continue
+            label = token.strip().lower()
+            if label in {"sol", "usdc"}:
+                continue
+            try:
+                value = float(token.replace(",", ""))
+            except ValueError:
+                continue
+            if not math.isfinite(value):
+                continue
+            numbers.append(value)
+            if len(numbers) == 2:
+                break
+
+        if not numbers:
+            return None
+
+        if len(numbers) == 1:
+            sol_raw = numbers[0]
+            if not math.isfinite(sol_raw):
+                return None
+            if sol_raw > 1:
+                sol_frac = sol_raw / 100.0
+            else:
+                sol_frac = sol_raw
+            if not math.isfinite(sol_frac):
+                return None
+            sol_frac = min(max(sol_frac, 0.0), 1.0)
+            return sol_frac, 1.0 - sol_frac
+
+        sol_raw, usdc_raw = numbers[0], numbers[1]
+        if not (math.isfinite(sol_raw) and math.isfinite(usdc_raw)):
+            return None
+        total = sol_raw + usdc_raw
+        if total <= 0 or not math.isfinite(total):
+            return None
+        sol_frac = sol_raw / total
+        usdc_frac = usdc_raw / total
+        sol_frac = min(max(sol_frac, 0.0), 1.0)
+        usdc_frac = min(max(usdc_frac, 0.0), 1.0)
+        total = sol_frac + usdc_frac
+        if total == 0 or not math.isfinite(total):
+            return None
+        sol_frac /= total
+        usdc_frac /= total
+        return sol_frac, usdc_frac
+
+    def _format_pct(self, fraction: float) -> str:
+        pct_value = round(float(fraction) * 100.0, 1)
+        if not math.isfinite(pct_value):
+            pct_value = 0.0
+        if pct_value.is_integer():
+            return str(int(pct_value))
+        return f"{pct_value:.1f}"
 
     def _parse_two_numbers(self, text: str) -> Optional[Tuple[float, float]]:
         tokens = text.split()
