@@ -599,14 +599,6 @@ async def sigma() -> Dict[str, Any]:
 async def healthz() -> Dict[str, bool]:
     return {"ok": True}
 
-@app.get("/_test/daily")
-async def _test_daily() -> Dict[str, Any]:
-    """temporary endpoint to trigger the daily advisory card on-demand."""
-    try:
-        await send_daily_advisory()
-        return {"ok": True}
-    except Exception as e:
-        return {"ok": False, "err": str(e)}
 
 # ----------------------------
 # Local run helper

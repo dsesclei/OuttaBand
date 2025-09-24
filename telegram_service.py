@@ -281,9 +281,9 @@ class TelegramSvc:
 
         lines = []
         if price is not None and math.isfinite(price):
-            lines.append(f"Price: <b>{price:.2f}</b>")
+            lines.append(f"<b>Price</b>: {price:.2f}")
         else:
-            lines.append("Price: Unknown")
+            lines.append("<b>Price</b>: Unknown")
 
         sigma_bucket = "mid"
         sigma_display = "–"
@@ -302,7 +302,7 @@ class TelegramSvc:
                 sigma_display = "–"
             sigma_stale = bool(sigma.get("stale"))
         sigma_bucket_label = sigma_bucket.title()
-        sigma_line = f"Volatility: <b>{sigma_display}</b> ({escape(sigma_bucket_label)})"
+        sigma_line = f"<b>Volatility</b>: {sigma_display} ({escape(sigma_bucket_label)})"
         if sigma_stale:
             sigma_line = f"{sigma_line} [<i>Stale</i>]"
         lines.append(sigma_line)
