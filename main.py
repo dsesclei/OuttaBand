@@ -281,6 +281,7 @@ async def process_breaches(
         rng = suggested_map.get(name)
         if rng is None:
             if name == "a" and effective_bucket == "high":
+                # don't touch a in high vol unless explicitly asked
                 if high_bucket_a is None:
                     high_bucket_a = band_advisor.ranges_for_price(
                         price,
@@ -434,7 +435,12 @@ async def send_daily_advisory() -> None:
             except (TypeError, ValueError):
                 sigma_pct = None
 
-        advisory = band_advisor.build_advisory(price, sigma_pct, bucket)
+        advisory = band_advisor.build_advisory(
+            price,
+            sigma_pct,
+            bucket,
+            include_a_on_high=False,
+        )
         advisory["stale"] = bool(sigma.get("stale")) if sigma else False
         await tg.send_advisory_card(advisory)
         log.info(
