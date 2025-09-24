@@ -513,6 +513,11 @@ class TelegramSvc:
         if action == "accept":
             repo = self._ensure_repo()
             await repo.upsert_band(band, rng[0], rng[1])
+            if self._log is not None:
+                try:
+                    self._log.info("breach_applied", band=band, low=rng[0], high=rng[1])
+                except Exception:
+                    pass
             del self._pending[mid]
             try:
                 await query.edit_message_text(f"applied: {band} → {fmt_range(*rng)}")
@@ -594,6 +599,14 @@ class TelegramSvc:
                 return
 
             del self._pending[mid]
+            if self._log is not None:
+                try:
+                    self._log.info(
+                        "advisory_applied",
+                        ranges={name: (rng[0], rng[1]) for name, rng in sorted(ranges.items())},
+                    )
+                except Exception:
+                    pass
             summary = ", ".join(
                 f"{name}→{fmt_range(*rng)}" for name, rng in sorted(ranges.items())
             )
