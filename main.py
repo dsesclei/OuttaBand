@@ -417,6 +417,7 @@ async def check_once() -> None:
 async def send_daily_advisory() -> None:
     assert http_client is not None, "http client not initialized"
     assert tg is not None, "telegram service not initialized"
+    assert repo is not None, "db repo not initialized"
 
     if not settings.DAILY_ENABLED:
         log.info("advisory_skip_disabled")
@@ -445,6 +446,9 @@ async def send_daily_advisory() -> None:
             except (TypeError, ValueError):
                 sigma_pct = None
 
+        baseline = await repo.get_baseline()
+        latest = await repo.get_latest_snapshot()
+
         advisory = band_advisor.build_advisory(
             price,
             sigma_pct,
@@ -452,7 +456,22 @@ async def send_daily_advisory() -> None:
             include_a_on_high=settings.INCLUDE_A_ON_HIGH,
         )
         advisory["stale"] = bool(sigma.get("stale")) if sigma else False
-        await tg.send_advisory_card(advisory)
+
+        drift_line: Optional[str] = None
+        if baseline and latest:
+            base_sol, base_usdc, _ = baseline
+            _snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
+            base_val_now = max(base_sol, 0.0) * price + max(base_usdc, 0.0)
+            cur_val_now = max(snap_sol, 0.0) * price + max(snap_usdc, 0.0)
+            if math.isfinite(base_val_now) and math.isfinite(cur_val_now):
+                drift_now = cur_val_now - base_val_now
+                if math.isfinite(drift_now):
+                    drift_pct = (drift_now / base_val_now) if base_val_now > 0 else 0.0
+                    if not math.isfinite(drift_pct):
+                        drift_pct = 0.0
+                    drift_line = f"drift now: ${drift_now:+.2f} ({drift_pct * 100:+.2f}%)"
+
+        await tg.send_advisory_card(advisory, drift_line=drift_line)
         log.info(
             "advisory_sent",
             price=price,

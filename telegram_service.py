@@ -102,7 +102,9 @@ class TelegramSvc:
         await self._ready.wait()
         await app.bot.send_message(chat_id=self._chat_id, text=text)
 
-    async def send_advisory_card(self, advisory: Dict[str, object]) -> None:
+    async def send_advisory_card(
+        self, advisory: Dict[str, object], drift_line: Optional[str] = None
+    ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
 
@@ -120,6 +122,8 @@ class TelegramSvc:
             split,
             stale=bool(advisory.get("stale")),
         )
+        if drift_line is not None:
+            text = f"{text}\n{drift_line}"
 
         buttons = [
             [
