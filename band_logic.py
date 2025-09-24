@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 from typing import Dict, Optional, Set, Tuple
 
 import band_advisor
@@ -20,18 +21,20 @@ def format_alert_message(
     source_label: Optional[str],
     bands: Dict[str, Tuple[float, float]],
 ) -> str:
-    lines = []
-    lines.append("◧ hard break")
-    lines.append(f"band: {band_name.upper()} ({side})")
+    side_label = side.title()
+    lines = ["⚠️ <b>Range Breach</b>"]
+    lines.append(
+        f"<b>Band</b>: {escape(band_name.upper())} ({escape(side_label)})"
+    )
 
-    price_line = f"price: {fmt_price(price)}"
+    price_line = f"<b>Price</b>: {fmt_price(price)}"
     if source_label:
-        price_line += f" ({source_label})"
+        price_line += f" ({escape(source_label)})"
     lines.append(price_line)
 
     for name in sorted(bands.keys()):
         lo, hi = bands[name]
-        lines.append(f"{name}: {fmt_range(lo, hi)}")
+        lines.append(f"{escape(name.upper())}: {fmt_range(lo, hi)}")
     return "\n".join(lines)
 
 
@@ -74,13 +77,15 @@ def format_advisory_card(
     sigma_display = "–"
     if sigma_pct is not None:
         sigma_display = f"{sigma_pct:.2f}%"
-    if stale:
-        sigma_display = f"{sigma_display} (STALE)"
 
+    bucket_label_raw = bucket or "Unknown"
+    bucket_label = bucket_label_raw.title()
     header = (
-        f"bands @ p={price:.2f} | σ={sigma_display} ({bucket}) "
-        f"→ split {split[0]}/{split[1]}/{split[2]}"
+        f"<b>Bands</b> at P=<b>{price:.2f}</b> | σ=<b>{sigma_display}</b> ({escape(bucket_label)}) "
+        f"→ Split <b>{split[0]}/{split[1]}/{split[2]}</b>"
     )
+    if stale:
+        header = f"{header} [<i>Stale</i>]"
 
     widths, _ = band_advisor.widths_for_bucket(bucket)
     lines = [header]
@@ -92,6 +97,8 @@ def format_advisory_card(
         if width is None:
             continue
         pct_display = f"±{width * 100:.2f}%"
-        lines.append(f"{name} {pct_display} : {fmt_range(lo, hi)}")
+        lines.append(
+            f"<b>{escape(name.upper())}</b> ({pct_display}): {fmt_range(lo, hi)}"
+        )
 
     return "\n".join(lines)

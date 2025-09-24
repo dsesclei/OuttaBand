@@ -472,7 +472,9 @@ async def send_daily_advisory() -> None:
                     drift_pct = (drift_now / base_val_now) if base_val_now > 0 else 0.0
                     if not math.isfinite(drift_pct):
                         drift_pct = 0.0
-                    drift_line = f"drift now: ${drift_now:+.2f} ({drift_pct * 100:+.2f}%)"
+                    drift_line = (
+                        f"<b>Drift</b>: ${drift_now:+.2f} ({drift_pct * 100:+.2f}%)"
+                    )
 
         await tg.send_advisory_card(advisory, drift_line=drift_line)
         log.info(
