@@ -38,6 +38,10 @@ class DBRepo:
         drift REAL NOT NULL
     );
     CREATE INDEX IF NOT EXISTS snapshots_ts_idx ON snapshots(ts);
+    CREATE TABLE IF NOT EXISTS prefs (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
     """
 
     _DEFAULT_BANDS = (
@@ -121,6 +125,54 @@ class DBRepo:
             (sol, usdc, ts),
         )
         await self._conn.commit()
+
+    async def get_pref(self, key: str) -> Optional[str]:
+        async with self._conn.execute("SELECT value FROM prefs WHERE key=?", (key,)) as cur:
+            row = await cur.fetchone()
+            return str(row[0]) if row and row[0] is not None else None
+
+    async def set_pref(self, key: str, value: str) -> None:
+        await self._conn.execute(
+            "INSERT INTO prefs(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        await self._conn.commit()
+
+    async def get_notional_usd(self) -> Optional[float]:
+        raw = await self.get_pref("notional_usd")
+        if raw is None:
+            return None
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value <= 0:
+            return None
+        return value
+
+    async def set_notional_usd(self, v: float) -> None:
+        if not math.isfinite(v) or v < 0:
+            raise ValueError("notional must be finite and non-negative")
+        await self.set_pref("notional_usd", f"{v}")
+
+    async def get_tilt_sol_frac(self) -> float:
+        raw = await self.get_pref("tilt_sol_frac")
+        if raw is None:
+            return 0.5
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 0.5
+        if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            return 0.5
+        return value
+
+    async def set_tilt_sol_frac(self, f: float) -> None:
+        if not math.isfinite(f):
+            raise ValueError("tilt must be finite")
+        clamped = min(max(f, 0.0), 1.0)
+        await self.set_pref("tilt_sol_frac", f"{clamped}")
 
     async def insert_snapshot(self, ts: int, sol: float, usdc: float, price: float, drift: float) -> None:
         await self._conn.execute(
