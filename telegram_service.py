@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from typing import Dict, Optional, Tuple, cast
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, cast
 
 from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -28,6 +28,8 @@ class TelegramSvc:
         self._ready: asyncio.Event = asyncio.Event()
         self._pending: Dict[int, Tuple[str, object]] = {}
         self._log: Optional[FilteringBoundLogger] = logger
+        self._price_provider: Optional[Callable[[], Awaitable[Optional[float]]]] = None
+        self._sigma_provider: Optional[Callable[[], Awaitable[Optional[Dict[str, Any]]]]] = None
 
     async def start(self, repo: DBRepo) -> None:
         if self._app is not None:
@@ -156,6 +158,28 @@ class TelegramSvc:
         if self._app is None:
             raise RuntimeError("Telegram service has not been started")
         return self._app
+
+    def set_price_provider(self, fn: Callable[[], Awaitable[Optional[float]]]) -> None:
+        self._price_provider = fn
+
+    def set_sigma_provider(self, fn: Callable[[], Awaitable[Optional[Dict[str, Any]]]]) -> None:
+        self._sigma_provider = fn
+
+    async def _get_price(self) -> Optional[float]:
+        if not self._price_provider:
+            return None
+        try:
+            return await self._price_provider()
+        except Exception:
+            return None
+
+    async def _get_sigma(self) -> Optional[Dict[str, Any]]:
+        if not self._sigma_provider:
+            return None
+        try:
+            return await self._sigma_provider()
+        except Exception:
+            return None
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update):
