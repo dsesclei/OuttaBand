@@ -106,7 +106,7 @@ async def fetch_sigma_1h(
         stale=False,
     )
 
-    fetched_at = now
+    fetched_at = time.time()
     async with _cache_lock:
         current = _cache.get(key)
         if current and (observed_ts is None or current[1] != observed_ts):

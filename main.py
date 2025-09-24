@@ -25,6 +25,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from db_repo import dbrepo
 from band_logic import broken_bands, suggest_new_bands
+import volatility as vol
 from telegram_service import telegramsvc
 
 
@@ -45,6 +46,11 @@ class Settings(BaseSettings):
     BAND_A: Optional[str] = None
     BAND_B: Optional[str] = None
     BAND_C: Optional[str] = None
+
+    BINANCE_BASE_URL: str = "https://api.binance.us"
+    BINANCE_SYMBOL: str = "SOLUSDT"
+    VOL_CACHE_TTL_SECONDS: int = 60
+    VOL_MAX_STALE_SECONDS: int = 7200
 
     # pydantic v2 config: .env file, case-insensitive for ops sanity
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
@@ -269,6 +275,29 @@ async def process_breaches(price: float, src_label: str) -> None:
         log.info("no_breach", price=price, source=src_label)
 
 
+async def get_sigma_reading() -> Optional[Dict[str, Any]]:
+    assert http_client is not None, "http client not initialized"
+
+    reading = await vol.fetch_sigma_1h(
+        http_client,
+        base_url=settings.BINANCE_BASE_URL,
+        symbol=settings.BINANCE_SYMBOL,
+        cache_ttl=max(5, settings.VOL_CACHE_TTL_SECONDS),
+        max_stale=settings.VOL_MAX_STALE_SECONDS,
+    )
+    if reading is None:
+        return None
+
+    return {
+        "sigma_pct": reading.sigma_pct,
+        "bucket": reading.bucket,
+        "window_min": reading.window_minutes,
+        "as_of_ts": reading.as_of_ts,
+        "sample_count": reading.sample_count,
+        "stale": reading.stale,
+    }
+
+
 # ----------------------------
 # Telegram
 # ----------------------------
@@ -287,6 +316,15 @@ async def check_once() -> None:
         price = await decide_price(http_client)
         if price is None:
             return
+        sigma = await get_sigma_reading()
+        log_kwargs = {
+            "sigma_pct": round(sigma["sigma_pct"], 3) if sigma else None,
+            "bucket": sigma["bucket"] if sigma else None,
+            "stale": sigma["stale"] if sigma else None,
+            "sample_count": sigma["sample_count"] if sigma else None,
+            "as_of_ts": sigma["as_of_ts"] if sigma else None,
+        }
+        log.info("sigma_ok" if sigma else "sigma_miss", **log_kwargs)
         await process_breaches(price, "meteora")
     except Exception as e:
         log.error("job_exception", err=str(e))
@@ -352,6 +390,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/sigma")
+async def sigma() -> Dict[str, Any]:
+    data = await get_sigma_reading()
+    return {"ok": data is not None, "data": data}
+
 
 @app.get("/healthz")
 async def healthz() -> Dict[str, bool]:
