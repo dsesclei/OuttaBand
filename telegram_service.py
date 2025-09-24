@@ -630,7 +630,9 @@ class TelegramSvc:
         if action == "apply":
             repo = self._ensure_repo()
             try:
-                await repo.upsert_many(ranges)
+                existing = (await repo.get_bands()).keys()
+                filtered = {name: rng for name, rng in ranges.items() if name in existing}
+                await repo.upsert_many(filtered)
             except Exception as exc:
                 if self._log is not None:
                     try:
@@ -651,12 +653,14 @@ class TelegramSvc:
                 try:
                     self._log.info(
                         "advisory_applied",
-                        ranges={name: (rng[0], rng[1]) for name, rng in sorted(ranges.items())},
+                        ranges={
+                            name: (rng[0], rng[1]) for name, rng in sorted(filtered.items())
+                        },
                     )
                 except Exception:
                     pass
             summary = ", ".join(
-                f"{name}→{fmt_range(*rng)}" for name, rng in sorted(ranges.items())
+                f"{name}→{fmt_range(*rng)}" for name, rng in sorted(filtered.items())
             )
             message_text = f"applied: {summary}" if summary else "applied"
             try:
