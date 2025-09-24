@@ -360,12 +360,41 @@ async def check_once() -> None:
             log.warning("advisory_price_invalid", price=price)
             return
         sigma = await get_sigma_reading()
+        val = sigma.get("sigma_pct") if sigma else None
+        sigma_pct_log: Optional[float]
+        if isinstance(val, (int, float)):
+            try:
+                val_float = float(val)
+            except (TypeError, ValueError):
+                sigma_pct_log = None
+            else:
+                sigma_pct_log = round(val_float, 3) if math.isfinite(val_float) else None
+        else:
+            sigma_pct_log = None
+
+        bucket = sigma.get("bucket") if sigma else None
+        stale = bool(sigma.get("stale")) if sigma else None
+
+        sample_count = None
+        if sigma and sigma.get("sample_count") is not None:
+            try:
+                sample_count = int(sigma.get("sample_count"))
+            except (TypeError, ValueError):
+                sample_count = None
+
+        as_of_ts = None
+        if sigma and sigma.get("as_of_ts") is not None:
+            try:
+                as_of_ts = int(sigma.get("as_of_ts"))
+            except (TypeError, ValueError):
+                as_of_ts = None
+
         log_kwargs = {
-            "sigma_pct": round(sigma["sigma_pct"], 3) if sigma else None,
-            "bucket": sigma["bucket"] if sigma else None,
-            "stale": sigma["stale"] if sigma else None,
-            "sample_count": sigma["sample_count"] if sigma else None,
-            "as_of_ts": sigma["as_of_ts"] if sigma else None,
+            "sigma_pct": sigma_pct_log,
+            "bucket": bucket,
+            "stale": stale,
+            "sample_count": sample_count,
+            "as_of_ts": as_of_ts,
         }
         log.info("sigma_ok" if sigma else "sigma_miss", **log_kwargs)
         bucket = sigma["bucket"] if sigma else None
