@@ -23,6 +23,20 @@ class DBRepo:
         last_sent_ts INTEGER,
         PRIMARY KEY (band, side)
     );
+    CREATE TABLE IF NOT EXISTS baseline (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        sol REAL NOT NULL,
+        usdc REAL NOT NULL,
+        ts INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS snapshots (
+        ts INTEGER NOT NULL,
+        sol REAL NOT NULL,
+        usdc REAL NOT NULL,
+        price REAL NOT NULL,
+        drift REAL NOT NULL,
+        PRIMARY KEY (ts)
+    );
     """
 
     _DEFAULT_BANDS = (
@@ -89,6 +103,40 @@ class DBRepo:
             (band, side, ts),
         )
         await self._conn.commit()
+
+    async def get_baseline(self) -> Optional[Tuple[float, float, int]]:
+        async with self._conn.execute("SELECT sol, usdc, ts FROM baseline WHERE id=1") as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            sol, usdc, ts = row
+            return float(sol), float(usdc), int(ts)
+
+    async def set_baseline(self, sol: float, usdc: float, ts: int) -> None:
+        await self._conn.execute(
+            "INSERT INTO baseline(id, sol, usdc, ts) VALUES(1,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET sol=excluded.sol, usdc=excluded.usdc, ts=excluded.ts",
+            (sol, usdc, ts),
+        )
+        await self._conn.commit()
+
+    async def insert_snapshot(self, ts: int, sol: float, usdc: float, price: float, drift: float) -> None:
+        await self._conn.execute(
+            "INSERT INTO snapshots(ts, sol, usdc, price, drift) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(ts) DO NOTHING",
+            (ts, sol, usdc, price, drift),
+        )
+        await self._conn.commit()
+
+    async def get_latest_snapshot(self) -> Optional[Tuple[int, float, float, float, float]]:
+        async with self._conn.execute(
+            "SELECT ts, sol, usdc, price, drift FROM snapshots ORDER BY ts DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            ts, sol, usdc, price, drift = row
+            return int(ts), float(sol), float(usdc), float(price), float(drift)
 
     async def _seed_bands_if_missing(self) -> None:
         for name, low, high in self._DEFAULT_BANDS:
