@@ -25,6 +25,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from db_repo import dbrepo
 from band_logic import broken_bands, suggest_with_policy
+import band_advisor
 import volatility as vol
 from telegram_service import telegramsvc
 
@@ -51,6 +52,10 @@ class Settings(BaseSettings):
     BINANCE_SYMBOL: str = "SOLUSDT"
     VOL_CACHE_TTL_SECONDS: int = 60
     VOL_MAX_STALE_SECONDS: int = 7200
+
+    DAILY_HOUR_UTC: int = 12
+    DAILY_MINUTE_UTC: int = 0
+    DAILY_ENABLED: bool = True
 
     # pydantic v2 config: .env file, case-insensitive for ops sanity
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
@@ -351,6 +356,28 @@ async def check_once() -> None:
         log.error("job_exception", err=str(e))
 
 
+async def send_daily_advisory() -> None:
+    assert http_client is not None, "http client not initialized"
+    assert repo is not None, "db repo not initialized"
+    assert tg is not None, "telegram service not initialized"
+
+    if not settings.DAILY_ENABLED:
+        log.info("advisory_skip_disabled")
+        return
+
+    price = await decide_price(http_client)
+    if price is None:
+        return
+
+    sigma = await get_sigma_reading()
+    bucket = sigma["bucket"] if sigma else "mid"
+    sigma_pct = sigma["sigma_pct"] if sigma else None
+
+    advisory = band_advisor.build_advisory(price, sigma_pct, bucket)
+    await tg.send_advisory_card(advisory)
+    log.info("advisory_sent", bucket=bucket, sigma_pct=sigma_pct)
+
+
 # ----------------------------
 # FastAPI app + lifespan
 # ----------------------------
@@ -385,6 +412,16 @@ async def lifespan(app: FastAPI):
         max_instances=1,      # never overlap
         misfire_grace_time=60 # small grace
     )
+    if settings.DAILY_ENABLED:
+        scheduler.add_job(
+            send_daily_advisory,
+            "cron",
+            hour=settings.DAILY_HOUR_UTC,
+            minute=settings.DAILY_MINUTE_UTC,
+            timezone=timezone.utc,
+            coalesce=True,
+            misfire_grace_time=300,
+        )
     scheduler.start()
     log.info("app_start", interval_min=settings.CHECK_EVERY_MINUTES)
 
