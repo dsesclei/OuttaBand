@@ -67,33 +67,32 @@ def suggest_new_bands(
     return suggest_with_policy(price, bands, broken, bucket="mid")
 
 
-def format_advisory_card(advisory: Dict[str, object]) -> str:
-    """Render the advisory payload into a multi-line human message."""
-
-    price = float(advisory["price"])
-    bucket = str(advisory["bucket"])
-    sigma_pct = advisory.get("sigma_pct")
-    split = advisory["split"]
-    ranges = advisory["ranges"]
-
+def format_advisory_card(
+    price: float,
+    sigma_pct: Optional[float],
+    bucket: str,
+    ranges: Dict[str, Tuple[float, float]],
+    split: Tuple[int, int, int],
+) -> str:
     sigma_display = "–"
     if sigma_pct is not None:
-        sigma_display = f"{float(sigma_pct):.1f}%"
+        sigma_display = f"{sigma_pct:.1f}%"
 
-    split_str = "/".join(str(part) for part in split)
     header = (
-        "bands @ p="
-        f"{fmt_price(price)} | σ={sigma_display} ({bucket}) → split {split_str}"
+        f"bands @ p={price:.2f} | σ={sigma_display} ({bucket}) "
+        f"→ split {split[0]}/{split[1]}/{split[2]}"
     )
 
     widths, _ = band_advisor.widths_for_bucket(bucket)
     lines = [header]
-    for name in sorted(ranges.keys()):
+    for name in ("a", "b", "c"):
+        if name not in ranges:
+            continue
         lo, hi = ranges[name]
         width = widths.get(name)
         if width is None:
             continue
         pct_display = f"±{width * 100:.1f}%"
-        lines.append(f"  {name} {pct_display} : {fmt_range(lo, hi)}")
+        lines.append(f"{name} {pct_display} : {fmt_range(lo, hi)}")
 
     return "\n".join(lines)
