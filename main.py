@@ -21,6 +21,7 @@ import structlog
 from structlog.typing import FilteringBoundLogger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from db_repo import dbrepo
@@ -59,6 +60,22 @@ class Settings(BaseSettings):
 
     # pydantic v2 config: .env file, case-insensitive for ops sanity
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
+
+    @model_validator(mode="after")
+    def _validate(self) -> "Settings":
+        if not (0 <= self.DAILY_HOUR_UTC <= 23):
+            raise ValueError("DAILY_HOUR_UTC must be between 0 and 23 inclusive")
+        if not (0 <= self.DAILY_MINUTE_UTC <= 59):
+            raise ValueError("DAILY_MINUTE_UTC must be between 0 and 59 inclusive")
+        if self.VOL_CACHE_TTL_SECONDS < 5:
+            raise ValueError("VOL_CACHE_TTL_SECONDS must be at least 5 seconds")
+        if self.VOL_MAX_STALE_SECONDS < self.VOL_CACHE_TTL_SECONDS:
+            raise ValueError("VOL_MAX_STALE_SECONDS must be >= VOL_CACHE_TTL_SECONDS")
+        if self.COOLDOWN_MINUTES < 1:
+            raise ValueError("COOLDOWN_MINUTES must be at least 1")
+        if self.CHECK_EVERY_MINUTES < 1:
+            raise ValueError("CHECK_EVERY_MINUTES must be at least 1")
+        return self
 
 
 settings = Settings()
@@ -468,6 +485,24 @@ async def lifespan(app: FastAPI):
         logger=base_log.bind(module="telegram"),
     )
     await tg.start(repo)
+
+    band_seeds = {
+        name: value
+        for name, value in {
+            "a": settings.BAND_A,
+            "b": settings.BAND_B,
+            "c": settings.BAND_C,
+        }.items()
+        if value is not None
+    }
+    log.info(
+        "config_ok",
+        binance_url=settings.BINANCE_BASE_URL,
+        binance_symbol=settings.BINANCE_SYMBOL,
+        daily_hour=settings.DAILY_HOUR_UTC,
+        daily_minute=settings.DAILY_MINUTE_UTC,
+        band_seeds=band_seeds,
+    )
 
     async def _price_provider() -> Optional[float]:
         if http_client is None:
