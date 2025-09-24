@@ -15,7 +15,7 @@ from telegram.ext import (
 )
 
 from db_repo import DBRepo
-from band_logic import fmt_range
+from band_logic import fmt_range, format_advisory_card
 from structlog.typing import FilteringBoundLogger
 
 
@@ -26,7 +26,7 @@ class TelegramSvc:
         self._app: Optional[Application] = None
         self._repo: Optional[DBRepo] = None
         self._ready: asyncio.Event = asyncio.Event()
-        self._pending: Dict[int, Tuple[str, Tuple[float, float]]] = {}
+        self._pending: Dict[int, Tuple[str, object]] = {}
         self._log: Optional[FilteringBoundLogger] = logger
 
     async def start(self, repo: DBRepo) -> None:
@@ -44,6 +44,7 @@ class TelegramSvc:
         app.add_handler(CommandHandler("bands", self._on_bands))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text_any))
         app.add_handler(CallbackQueryHandler(self._on_alert_action, pattern=r"^alert:(accept|ignore|set):[abc]$"))
+        app.add_handler(CallbackQueryHandler(self._on_adv_action, pattern=r"^adv:(apply|ignore|set)$"))
         app.add_handler(CallbackQueryHandler(self._on_bands_pick, pattern=r"^b:[abc]$"))
         app.add_handler(CallbackQueryHandler(self._on_bands_back, pattern=r"^b:back$"))
         app.add_handler(CallbackQueryHandler(self._on_callback))
@@ -81,6 +82,31 @@ class TelegramSvc:
         await self._ready.wait()
         await app.bot.send_message(chat_id=self._chat_id, text=text)
 
+    async def send_advisory_card(self, advisory: Dict[str, object]) -> None:
+        app = self._ensure_app()
+        await self._ready.wait()
+
+        price = float(advisory["price"])
+        sigma_pct = cast(Optional[float], advisory.get("sigma_pct"))
+        bucket = str(advisory["bucket"])
+        split = cast(Tuple[int, int, int], advisory["split"])
+        ranges = cast(Dict[str, Tuple[float, float]], advisory["ranges"])
+
+        text = format_advisory_card(price, sigma_pct, bucket, ranges, split)
+
+        buttons = [
+            [InlineKeyboardButton("apply all", callback_data="adv:apply")],
+            [InlineKeyboardButton("set exact", callback_data="adv:set")],
+            [InlineKeyboardButton("ignore", callback_data="adv:ignore")],
+        ]
+
+        message = await app.bot.send_message(
+            chat_id=self._chat_id,
+            text=text,
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        self._pending[message.message_id] = ("adv", dict(ranges))
+
     async def send_breach_offer(
         self,
         band: str,
@@ -117,7 +143,7 @@ class TelegramSvc:
             text=text,
             reply_markup=InlineKeyboardMarkup(buttons),
         )
-        self._pending[message.message_id] = (band, suggested_range)
+        self._pending[message.message_id] = ("alert", (band, suggested_range))
 
     def _ensure_app(self) -> Application:
         if self._app is None:
@@ -269,7 +295,12 @@ class TelegramSvc:
             await query.answer("stale or unknown alert", show_alert=True)
             return
 
-        pending_band, rng = self._pending[mid]
+        kind, payload = self._pending[mid]
+        if kind != "alert":
+            await query.answer("stale or unknown alert", show_alert=True)
+            return
+
+        pending_band, rng = cast(Tuple[str, Tuple[float, float]], payload)
         if pending_band != band:
             await query.answer("stale or unknown alert", show_alert=True)
             return
@@ -309,6 +340,68 @@ class TelegramSvc:
                 text=f"enter low high for {band.upper()}",
                 reply_markup=ForceReply(selective=True, input_field_placeholder="low high"),
             )
+
+    async def _on_adv_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        if query is None:
+            return
+        if not self._is_authorized(update):
+            await query.answer("unauthorized", show_alert=True)
+            return
+
+        data = query.data or ""
+        parts = data.split(":")
+        if len(parts) != 2:
+            await query.answer()
+            return
+
+        action = parts[1]
+        message = query.message
+        mid = message.message_id if message else None
+        if mid is None or mid not in self._pending:
+            await query.answer("stale or unknown advisory", show_alert=True)
+            return
+
+        kind, payload = self._pending[mid]
+        if kind != "adv":
+            await query.answer("stale or unknown advisory", show_alert=True)
+            return
+
+        ranges = cast(Dict[str, Tuple[float, float]], payload)
+
+        await query.answer()
+
+        if action == "apply":
+            repo = self._ensure_repo()
+            await repo.upsert_many(ranges)
+            del self._pending[mid]
+            summary = ", ".join(
+                f"{name}→{fmt_range(*rng)}" for name, rng in sorted(ranges.items())
+            )
+            message_text = f"applied: {summary}" if summary else "applied"
+            try:
+                await query.edit_message_text(message_text)
+            except Exception:
+                await context.bot.send_message(chat_id=self._chat_id, text=message_text)
+        elif action == "ignore":
+            del self._pending[mid]
+            try:
+                await query.edit_message_text("dismissed")
+            except Exception:
+                await context.bot.send_message(chat_id=self._chat_id, text="dismissed")
+        elif action == "set":
+            del self._pending[mid]
+            try:
+                await query.edit_message_text(
+                    "tap a band to edit",
+                    reply_markup=self._bands_menu_kb(),
+                )
+            except Exception:
+                await context.bot.send_message(
+                    chat_id=self._chat_id,
+                    text="tap a band to edit",
+                    reply_markup=self._bands_menu_kb(),
+                )
 
     async def _on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.callback_query is None:
