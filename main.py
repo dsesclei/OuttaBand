@@ -24,7 +24,7 @@ from fastapi import FastAPI
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from db_repo import dbrepo
-from band_logic import broken_bands, suggest_with_policy
+from band_logic import broken_bands
 import band_advisor
 import volatility as vol
 from telegram_service import telegramsvc
@@ -251,6 +251,12 @@ async def process_breaches(
     effective_bucket = bucket or "mid"
     warned = False
 
+    suggested_map = band_advisor.ranges_for_price(
+        price,
+        effective_bucket,
+        include_a_on_high=False,
+    )
+
     for name, (lo, hi) in bands.items():
         if name not in broken:
             continue
@@ -271,12 +277,10 @@ async def process_breaches(
             log.warning("bucket_missing", band=name, side=side, fallback="mid")
             warned = True
 
-        suggested = suggest_with_policy(price, bands, {name}, effective_bucket)
-        rng = suggested.get(name)
-        if rng is None:
-            rng = bands.get(name)
-        if rng is None:
-            rng = (price, price)
+        if name not in suggested_map:
+            continue
+
+        rng = suggested_map[name]
         log.info(
             "breach_offer",
             band=name,
@@ -374,8 +378,14 @@ async def send_daily_advisory() -> None:
     sigma_pct = sigma["sigma_pct"] if sigma else None
 
     advisory = band_advisor.build_advisory(price, sigma_pct, bucket)
+    advisory["stale"] = bool(sigma.get("stale")) if sigma else False
     await tg.send_advisory_card(advisory)
-    log.info("advisory_sent", bucket=bucket, sigma_pct=sigma_pct)
+    log.info(
+        "advisory_sent",
+        bucket=bucket,
+        sigma_pct=sigma_pct,
+        stale=advisory["stale"],
+    )
 
 
 # ----------------------------

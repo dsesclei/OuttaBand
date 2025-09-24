@@ -65,7 +65,6 @@ def ranges_for_price(
     price: float,
     bucket: str,
     *,
-    round_dp: int = 2,
     include_a_on_high: bool = False,
 ) -> Dict[str, Tuple[float, float]]:
     """Build absolute ranges for ``price`` under the given ``bucket`` policy.
@@ -73,8 +72,8 @@ def ranges_for_price(
     The helper uses ``widths_for_bucket`` to determine the percent widths. When
     the bucket is ``"high"`` it omits band ``"a"`` unless ``include_a_on_high``
     is set, which lets callers opt in explicitly without mutating stored bands.
-    Ranges are returned as raw floats; rounding is left to formatting layers so
-    callers can choose their own presentation.
+    Ranges are returned as raw floats so formatting layers can choose how to
+    present the numbers.
     """
 
     widths, skip_a = widths_for_bucket(bucket)
@@ -85,12 +84,6 @@ def ranges_for_price(
         delta = price * width
         ranges[band] = (price - delta, price + delta)
     return ranges
-
-
-def quantize(value: float, dp: int = 2) -> float:
-    """Round ``value`` to ``dp`` decimal places using the built-in ``round``."""
-
-    return round(value, dp)
 
 
 def build_advisory(

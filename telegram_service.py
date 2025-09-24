@@ -92,7 +92,14 @@ class TelegramSvc:
         split = cast(Tuple[int, int, int], advisory["split"])
         ranges = cast(Dict[str, Tuple[float, float]], advisory["ranges"])
 
-        text = format_advisory_card(price, sigma_pct, bucket, ranges, split)
+        text = format_advisory_card(
+            price,
+            sigma_pct,
+            bucket,
+            ranges,
+            split,
+            stale=bool(advisory.get("stale")),
+        )
 
         buttons = [
             [InlineKeyboardButton("apply all", callback_data="adv:apply")],

@@ -73,10 +73,14 @@ def format_advisory_card(
     bucket: str,
     ranges: Dict[str, Tuple[float, float]],
     split: Tuple[int, int, int],
+    *,
+    stale: bool = False,
 ) -> str:
     sigma_display = "–"
     if sigma_pct is not None:
         sigma_display = f"{sigma_pct:.1f}%"
+    if stale:
+        sigma_display = f"{sigma_display} (STALE)"
 
     header = (
         f"bands @ p={price:.2f} | σ={sigma_display} ({bucket}) "
