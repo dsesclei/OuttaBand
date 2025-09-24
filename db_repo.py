@@ -214,6 +214,7 @@ class DBRepo:
             await self._conn.commit()
 
     async def _upsert_bands_from_env(self, settings: "Settings") -> None:
+        defaults = {name: (float(low), float(high)) for name, low, high in self._DEFAULT_BANDS}
         for name, spec in (("a", settings.BAND_A), ("b", settings.BAND_B), ("c", settings.BAND_C)):
             if not spec:
                 continue
@@ -222,8 +223,34 @@ class DBRepo:
                 self._log.warning("band_env_invalid", band=name, spec=spec)
                 continue
             lo, hi = parsed
-            await self.upsert_band(name, lo, hi)
-            self._log.info("band_env_upserted", band=name, low=lo, high=hi)
+            async with self._conn.execute(
+                "SELECT low, high FROM bands WHERE name=?",
+                (name,),
+            ) as cur:
+                row = await cur.fetchone()
+            current = (float(row[0]), float(row[1])) if row else None
+
+            if current is None:
+                await self.upsert_band(name, lo, hi)
+                self._log.info("band_env_seeded", band=name, low=lo, high=hi, reason="missing")
+                continue
+
+            if self._ranges_close(current, (lo, hi)):
+                self._log.debug("band_env_already_set", band=name, low=lo, high=hi)
+                continue
+
+            default_range = defaults.get(name)
+            if default_range and self._ranges_close(current, default_range):
+                await self.upsert_band(name, lo, hi)
+                self._log.info("band_env_seeded", band=name, low=lo, high=hi, reason="default")
+                continue
+
+            self._log.info(
+                "band_env_skipped_existing",
+                band=name,
+                existing_low=current[0],
+                existing_high=current[1],
+            )
 
     @staticmethod
     def _parse_band_spec(spec: str) -> Optional[Tuple[float, float]]:
@@ -237,5 +264,18 @@ class DBRepo:
             return (lo, hi)
         except Exception:
             return None
+
+    @staticmethod
+    def _ranges_close(
+        current: Tuple[float, float],
+        target: Tuple[float, float],
+        *,
+        rel_tol: float = 1e-9,
+        abs_tol: float = 1e-9,
+    ) -> bool:
+        return (
+            math.isclose(current[0], target[0], rel_tol=rel_tol, abs_tol=abs_tol)
+            and math.isclose(current[1], target[1], rel_tol=rel_tol, abs_tol=abs_tol)
+        )
 
 dbrepo = DBRepo

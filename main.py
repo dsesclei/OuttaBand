@@ -316,7 +316,7 @@ async def process_breaches(
         await tg.send_breach_offer(
             band=name,
             price=price,
-            src_label=src_label,
+            src_label=None,
             bands=bands,
             suggested_range=rng,
             policy_meta=(effective_bucket, width) if width is not None else None,
@@ -599,6 +599,14 @@ async def sigma() -> Dict[str, Any]:
 async def healthz() -> Dict[str, bool]:
     return {"ok": True}
 
+@app.get("/_test/daily")
+async def _test_daily() -> Dict[str, Any]:
+    """temporary endpoint to trigger the daily advisory card on-demand."""
+    try:
+        await send_daily_advisory()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "err": str(e)}
 
 # ----------------------------
 # Local run helper

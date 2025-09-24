@@ -320,6 +320,12 @@ class TelegramSvc:
             f"<b>Advisory Split</b>: {split[0]}/{split[1]}/{split[2]} ({escape(sigma_bucket_label)})"
         )
 
+        if latest:
+            _snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
+            lines.append(f"<b>Balances</b>: {snap_sol:g} SOL, {snap_usdc:g} USDC")
+        else:
+            lines.append("<b>Balances</b>: (none; run /updatebalances)")
+
         if price is not None and math.isfinite(price) and price > 0 and baseline and latest:
             base_sol, base_usdc, _ = baseline
             _snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
