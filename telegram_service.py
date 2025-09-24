@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, cast
 
@@ -21,6 +22,8 @@ from structlog.typing import FilteringBoundLogger
 
 
 class TelegramSvc:
+    MAX_PENDING = int(os.getenv("LPBOT_PENDING_CAP", "100"))
+
     def __init__(self, token: str, chat_id: int, logger: Optional[FilteringBoundLogger] = None) -> None:
         self._token = token
         self._chat_id = chat_id
@@ -31,6 +34,16 @@ class TelegramSvc:
         self._log: Optional[FilteringBoundLogger] = logger
         self._price_provider: Optional[Callable[[], Awaitable[Optional[float]]]] = None
         self._sigma_provider: Optional[Callable[[], Awaitable[Optional[Dict[str, Any]]]]] = None
+
+    def _prune_pending(self) -> None:
+        cap = max(1, self.MAX_PENDING)
+        if len(self._pending) <= cap:
+            return
+        # prune oldest message ids (Telegram message IDs increase monotonically per chat)
+        for mid in sorted(self._pending.keys()):
+            if len(self._pending) <= cap:
+                break
+            del self._pending[mid]
 
     async def start(self, repo: DBRepo) -> None:
         if self._app is not None:
@@ -120,6 +133,7 @@ class TelegramSvc:
             reply_markup=InlineKeyboardMarkup(buttons),
         )
         self._pending[message.message_id] = ("adv", dict(ranges))
+        self._prune_pending()
 
     async def send_breach_offer(
         self,
@@ -158,6 +172,7 @@ class TelegramSvc:
             reply_markup=InlineKeyboardMarkup(buttons),
         )
         self._pending[message.message_id] = ("alert", (band, suggested_range))
+        self._prune_pending()
 
     def _ensure_app(self) -> Application:
         if self._app is None:
