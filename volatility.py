@@ -24,6 +24,9 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import httpx
+import structlog
+
+log = structlog.get_logger("volatility")
 
 DEFAULT_BASE_URL = "https://api.binance.us"
 DEFAULT_SYMBOL = "SOLUSDT"
@@ -92,7 +95,19 @@ async def fetch_sigma_1h(
 
     closes, close_times = _extract_closes(payload)
     sigma_data = compute_sigma_from_closes(closes)
-    if sigma_data is None or len(close_times) < 61:
+    if sigma_data is None:
+        first_close = closes[0] if closes else None
+        last_close = closes[-1] if closes else None
+        log.debug(
+            "sigma_compute_failed",
+            close_count=len(closes),
+            first_close=first_close,
+            last_close=last_close,
+            limit=limit,
+        )
+        return await _return_stale_if_available(key, max_stale)
+
+    if len(close_times) < 61:
         return await _return_stale_if_available(key, max_stale)
 
     sigma_pct, sample_count = sigma_data

@@ -57,6 +57,7 @@ class TelegramSvc:
                 self._log = cast(FilteringBoundLogger, candidate).bind(module="telegram")
         app = Application.builder().token(self._token).build()
         app.add_handler(CommandHandler("start", self._on_start))
+        app.add_handler(CommandHandler("help", self._on_help))
         app.add_handler(CommandHandler("status", self._on_status))
         app.add_handler(CommandHandler("bands", self._on_bands))
         app.add_handler(CommandHandler("setbaseline", self._on_setbaseline))
@@ -210,6 +211,22 @@ class TelegramSvc:
             return
         await context.bot.send_message(chat_id=self._chat_id, text="Watcher online. Use /status for bands.")
 
+    async def _on_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_authorized(update):
+            chat = update.effective_chat
+            if chat is not None:
+                await context.bot.send_message(chat_id=chat.id, text="unauthorized")
+            return
+        help_lines = [
+            "commands:",
+            "/status — latest price, σ, bands, policy split",
+            "/bands — edit band ranges",
+            "/setbaseline <sol> sol <usdc> usdc",
+            "/updatebalances <sol> sol <usdc> usdc",
+            "/help — show this list",
+        ]
+        await context.bot.send_message(chat_id=self._chat_id, text="\n".join(help_lines))
+
     async def _on_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_authorized(update):
             chat = update.effective_chat
@@ -298,7 +315,7 @@ class TelegramSvc:
         if parsed is None:
             await context.bot.send_message(
                 chat_id=self._chat_id,
-                text="usage: /setbaseline n sol m usdc",
+                text="usage: /setbaseline <sol> sol <usdc> usdc (e.g. /setbaseline 1.0 sol 200 usdc)",
             )
             return
 
@@ -308,7 +325,7 @@ class TelegramSvc:
         if not (math.isfinite(sol) and math.isfinite(usdc)):
             await context.bot.send_message(
                 chat_id=self._chat_id,
-                text="usage: /setbaseline n sol m usdc",
+                text="usage: /setbaseline <sol> sol <usdc> usdc (e.g. /setbaseline 1.0 sol 200 usdc)",
             )
             return
 
@@ -333,7 +350,7 @@ class TelegramSvc:
         if parsed is None:
             await context.bot.send_message(
                 chat_id=self._chat_id,
-                text="usage: /updatebalances x sol y usdc",
+                text="usage: /updatebalances <sol> sol <usdc> usdc (e.g. /updatebalances 1.0 sol 200 usdc)",
             )
             return
 
@@ -343,7 +360,7 @@ class TelegramSvc:
         if not (math.isfinite(sol_amt) and math.isfinite(usdc_amt)):
             await context.bot.send_message(
                 chat_id=self._chat_id,
-                text="usage: /updatebalances x sol y usdc",
+                text="usage: /updatebalances <sol> sol <usdc> usdc (e.g. /updatebalances 1.0 sol 200 usdc)",
             )
             return
 
@@ -351,7 +368,7 @@ class TelegramSvc:
         if price is None or not math.isfinite(price) or price <= 0:
             await context.bot.send_message(
                 chat_id=self._chat_id,
-                text="price unavailable, try again later",
+                text="price unavailable: meteora api temporarily unavailable, try again later",
             )
             return
 

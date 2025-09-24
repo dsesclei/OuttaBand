@@ -76,7 +76,7 @@ class DBRepo:
         if not items:
             return
 
-        await self._conn.execute("BEGIN")
+        await self._conn.execute("BEGIN IMMEDIATE")
         try:
             for name, (low, high) in items.items():
                 await self._conn.execute(

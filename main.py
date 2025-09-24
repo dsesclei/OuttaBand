@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     DAILY_HOUR_UTC: int = 12
     DAILY_MINUTE_UTC: int = 0
     DAILY_ENABLED: bool = True
+    INCLUDE_A_ON_HIGH: bool = False
 
     # pydantic v2 config: .env file, case-insensitive for ops sanity
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
@@ -448,7 +449,7 @@ async def send_daily_advisory() -> None:
             price,
             sigma_pct,
             bucket,
-            include_a_on_high=False,
+            include_a_on_high=settings.INCLUDE_A_ON_HIGH,
         )
         advisory["stale"] = bool(sigma.get("stale")) if sigma else False
         await tg.send_advisory_card(advisory)
@@ -501,6 +502,7 @@ async def lifespan(app: FastAPI):
         binance_symbol=settings.BINANCE_SYMBOL,
         daily_hour=settings.DAILY_HOUR_UTC,
         daily_minute=settings.DAILY_MINUTE_UTC,
+        include_a_on_high=settings.INCLUDE_A_ON_HIGH,
         band_seeds=band_seeds,
     )
 
