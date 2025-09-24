@@ -62,18 +62,6 @@ def suggest_with_policy(
             continue
         new_bands[name] = suggested[name]
     return new_bands
-
-
-def suggest_new_bands(
-    price: float,
-    bands: Dict[str, Tuple[float, float]],
-    broken: Set[str],
-) -> Dict[str, Tuple[float, float]]:
-    raise NotImplementedError(
-        "use suggest_with_policy(price, bands, broken, bucket)"
-    )
-
-
 def format_advisory_card(
     price: float,
     sigma_pct: Optional[float],
