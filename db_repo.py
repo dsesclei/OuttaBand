@@ -56,6 +56,24 @@ class DBRepo:
         )
         await self._conn.commit()
 
+    async def upsert_many(self, items: Dict[str, Tuple[float, float]]) -> None:
+        if not items:
+            return
+
+        await self._conn.execute("BEGIN")
+        try:
+            for name, (low, high) in items.items():
+                await self._conn.execute(
+                    "INSERT INTO bands(name, low, high) VALUES(?,?,?) "
+                    "ON CONFLICT(name) DO UPDATE SET low=excluded.low, high=excluded.high",
+                    (name, low, high),
+                )
+        except Exception:
+            await self._conn.rollback()
+            raise
+        else:
+            await self._conn.commit()
+
     async def get_last_alert(self, band: str, side: str) -> Optional[int]:
         async with self._conn.execute(
             "SELECT last_sent_ts FROM alerts WHERE band=? AND side=?",
