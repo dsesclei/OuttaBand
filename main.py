@@ -373,30 +373,42 @@ async def check_once() -> None:
 
 async def send_daily_advisory() -> None:
     assert http_client is not None, "http client not initialized"
-    assert repo is not None, "db repo not initialized"
     assert tg is not None, "telegram service not initialized"
 
     if not settings.DAILY_ENABLED:
         log.info("advisory_skip_disabled")
         return
 
-    price = await decide_price(http_client)
-    if price is None:
-        return
+    try:
+        price = await decide_price(http_client)
+        if price is None:
+            return
 
-    sigma = await get_sigma_reading()
-    bucket = sigma["bucket"] if sigma else "mid"
-    sigma_pct = sigma["sigma_pct"] if sigma else None
+        sigma = await get_sigma_reading()
+        bucket = (sigma.get("bucket") if sigma else None) or "mid"
+        sigma_pct_raw = sigma.get("sigma_pct") if sigma else None
 
-    advisory = band_advisor.build_advisory(price, sigma_pct, bucket)
-    advisory["stale"] = bool(sigma.get("stale")) if sigma else False
-    await tg.send_advisory_card(advisory)
-    log.info(
-        "advisory_sent",
-        bucket=bucket,
-        sigma_pct=sigma_pct,
-        stale=advisory["stale"],
-    )
+        sigma_pct: Optional[float]
+        if sigma_pct_raw is None:
+            sigma_pct = None
+        else:
+            try:
+                sigma_pct = float(sigma_pct_raw)
+            except (TypeError, ValueError):
+                sigma_pct = None
+
+        advisory = band_advisor.build_advisory(price, sigma_pct, bucket)
+        advisory["stale"] = bool(sigma.get("stale")) if sigma else False
+        await tg.send_advisory_card(advisory)
+        log.info(
+            "advisory_sent",
+            price=price,
+            bucket=bucket,
+            sigma_pct=sigma_pct,
+            stale=advisory["stale"],
+        )
+    except Exception as exc:
+        log.error("advisory_failed", err=str(exc))
 
 
 # ----------------------------
