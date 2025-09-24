@@ -6,7 +6,9 @@ recommendations, range building, and simple quantisation.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+import math
+
+from typing import Any, Dict, Optional, Set, Tuple
 
 
 _BUCKET_WIDTHS: Dict[str, Dict[str, float]] = {
@@ -60,6 +62,70 @@ def split_for_sigma(sigma_pct: float | None) -> Tuple[int, int, int]:
     if sigma_pct is None or sigma_pct < 0.6:
         return (60, 20, 20)
     return (50, 30, 20)
+
+
+def split_for_bucket(bucket: str) -> Tuple[int, int, int]:
+    """Return the advisory split for a bucket identifier."""
+
+    if bucket == "low":
+        return (60, 20, 20)
+    if bucket in {"mid", "high"}:
+        return (50, 30, 20)
+    raise ValueError(f"unknown bucket: {bucket}")
+
+
+def compute_amounts(
+    price: float,
+    split: Tuple[int, int, int],
+    ranges: Dict[str, Tuple[float, float]],
+    notional_usd: Optional[float],
+    tilt_sol_frac: float,
+    *,
+    present_bands: Optional[Set[str]] = None,
+    redistribute_skipped: bool = False,
+    sol_decimals: int = 6,
+    usdc_decimals: int = 2,
+) -> Tuple[Dict[str, Tuple[float, float]], float]:
+    """Compute per-band token amounts using a simple tilt heuristic."""
+
+    if (
+        notional_usd is None
+        or notional_usd <= 0
+        or price <= 0
+        or not math.isfinite(price)
+        or not math.isfinite(tilt_sol_frac)
+    ):
+        return {}, 0.0
+
+    tilt = min(max(tilt_sol_frac, 0.0), 1.0)
+    band_order = ("a", "b", "c")
+    split_map = {band: pct for band, pct in zip(band_order, split)}
+
+    present = set(ranges.keys()) if present_bands is None else set(present_bands)
+    present &= set(band_order)
+
+    if not present:
+        return {}, 0.0
+
+    total_present_pct = sum(split_map.get(band, 0) for band in present)
+    total_pct = sum(split_map.values())
+    skipped_pct = max(total_pct - total_present_pct, 0)
+
+    if redistribute_skipped and total_present_pct:
+        scale = total_pct / total_present_pct
+    else:
+        scale = 1.0
+
+    amounts: Dict[str, Tuple[float, float]] = {}
+    for band in present:
+        pct = split_map.get(band, 0) * scale
+        per_band_usd = (notional_usd * pct) / 100.0
+        sol_amt = round((per_band_usd * tilt) / price, sol_decimals)
+        usdc_usd = round(per_band_usd * (1.0 - tilt), usdc_decimals)
+        amounts[band] = (sol_amt, usdc_usd)
+
+    unallocated_usd = 0.0 if redistribute_skipped else round((notional_usd * skipped_pct) / 100.0, usdc_decimals)
+    return amounts, unallocated_usd
 
 
 def ranges_for_price(
