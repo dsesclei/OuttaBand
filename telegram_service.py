@@ -213,15 +213,23 @@ class TelegramSvc:
         else:
             lines.append("p=unknown")
 
+        sigma_bucket = "mid"
+        sigma_display = "–"
+        sigma_stale = False
         if sigma:
-            sigma_pct = sigma.get("sigma_pct")
-            bucket = sigma.get("bucket")
-            stale = bool(sigma.get("stale"))
-            if sigma_pct is not None and math.isfinite(float(sigma_pct)) and bucket:
-                sigma_line = f"σ={float(sigma_pct):.1f}% ({bucket})"
-                if stale:
-                    sigma_line += " (STALE)"
-                lines.append(sigma_line)
+            bucket_raw = sigma.get("bucket")
+            if isinstance(bucket_raw, str) and bucket_raw:
+                sigma_bucket = bucket_raw
+            sigma_pct_val = sigma.get("sigma_pct")
+            try:
+                if sigma_pct_val is not None and math.isfinite(float(sigma_pct_val)):
+                    sigma_display = f"{float(sigma_pct_val):.2f}%"
+            except (TypeError, ValueError):
+                sigma_display = "–"
+            sigma_stale = bool(sigma.get("stale"))
+        lines.append(
+            f"σ={sigma_display} ({sigma_bucket})" + (" (STALE)" if sigma_stale else "")
+        )
 
         lines.append("bands:")
         if bands:
