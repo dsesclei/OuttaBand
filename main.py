@@ -13,7 +13,7 @@ import random
 import time
 from contextlib import asynccontextmanager
 from datetime import timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import aiosqlite
 import httpx
@@ -256,6 +256,7 @@ async def process_breaches(
         effective_bucket,
         include_a_on_high=False,
     )
+    high_bucket_a: Optional[Tuple[float, float]] = None
 
     for name, (lo, hi) in bands.items():
         if name not in broken:
@@ -277,10 +278,19 @@ async def process_breaches(
             log.warning("bucket_missing", band=name, side=side, fallback="mid")
             warned = True
 
-        if name not in suggested_map:
+        rng = suggested_map.get(name)
+        if rng is None:
+            if name == "a" and effective_bucket == "high":
+                if high_bucket_a is None:
+                    high_bucket_a = band_advisor.ranges_for_price(
+                        price,
+                        "high",
+                        include_a_on_high=True,
+                    ).get("a")
+                rng = high_bucket_a
+        if rng is None:
             continue
 
-        rng = suggested_map[name]
         log.info(
             "breach_offer",
             band=name,
@@ -305,7 +315,8 @@ async def process_breaches(
 
 
 async def get_sigma_reading() -> Optional[Dict[str, Any]]:
-    assert http_client is not None, "http client not initialized"
+    if http_client is None:
+        return None
 
     reading = await vol.fetch_sigma_1h(
         http_client,
@@ -401,17 +412,23 @@ async def lifespan(app: FastAPI):
     repo = dbrepo(db_conn, base_log.bind(module="db"))
     await repo.init(settings)
 
+    # one httpx client (http/2), shared
+    http_client = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
+
     tg = telegramsvc(
         settings.TELEGRAM_BOT_TOKEN,
         settings.TELEGRAM_CHAT_ID,
         logger=base_log.bind(module="telegram"),
     )
     await tg.start(repo)
-    tg.set_price_provider(lambda: decide_price(http_client))
-    tg.set_sigma_provider(get_sigma_reading)
 
-    # one httpx client (http/2), shared
-    http_client = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
+    async def _price_provider() -> Optional[float]:
+        if http_client is None:
+            return None
+        return await decide_price(http_client)
+
+    tg.set_price_provider(_price_provider)
+    tg.set_sigma_provider(get_sigma_reading)
 
     # scheduler with explicit timezone and sane semantics
     scheduler = AsyncIOScheduler(timezone=timezone.utc)

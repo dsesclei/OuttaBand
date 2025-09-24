@@ -216,7 +216,7 @@ class TelegramSvc:
             bucket = sigma.get("bucket")
             stale = bool(sigma.get("stale"))
             if sigma_pct is not None and math.isfinite(float(sigma_pct)) and bucket:
-                sigma_line = f"σ={float(sigma_pct):.2f}% ({bucket})"
+                sigma_line = f"σ={float(sigma_pct):.1f}% ({bucket})"
                 if stale:
                     sigma_line += " (STALE)"
                 lines.append(sigma_line)
@@ -241,7 +241,7 @@ class TelegramSvc:
                     if not math.isfinite(drift_pct):
                         drift_pct = 0.0
                     lines.append(
-                        f"drift now: ${drift_now:.2f} ({drift_pct * 100:+.2f}%)"
+                        f"drift now: ${drift_now:+.2f} ({drift_pct * 100:+.2f}%)"
                     )
                 else:
                     lines.append("drift now: unavailable")
@@ -250,7 +250,7 @@ class TelegramSvc:
         elif latest:
             _snap_ts, _snap_sol, _snap_usdc, snap_price, snap_drift = latest
             if math.isfinite(snap_price) and math.isfinite(snap_drift):
-                lines.append(f"drift (last @ {snap_price:.2f}): ${snap_drift:.2f}")
+                lines.append(f"drift (last @ {snap_price:.2f}): ${snap_drift:+.2f}")
 
         await context.bot.send_message(chat_id=self._chat_id, text="\n".join(lines))
 
@@ -364,7 +364,7 @@ class TelegramSvc:
         await context.bot.send_message(
             chat_id=self._chat_id,
             text=(
-                f"drift: ${drift:.2f} ({drift_pct * 100:+.2f}%) | "
+                f"drift: ${drift:+.2f} ({drift_pct * 100:+.2f}%) | "
                 f"base ${base_val:.2f} → now ${cur_val:.2f} @ p={price:.2f}"
             ),
         )
@@ -674,7 +674,7 @@ class TelegramSvc:
         context.chat_data.pop("await_exact", None)
 
     def _parse_two_numbers(self, text: str) -> Optional[Tuple[float, float]]:
-        tokens = text.replace(",", " ").split()
+        tokens = text.split()
         numbers: list[float] = []
         for token in tokens:
             if token.startswith("/"):
@@ -683,7 +683,8 @@ class TelegramSvc:
             if label in {"sol", "usdc"}:
                 continue
             try:
-                value = float(token)
+                token_clean = token.replace(",", "")
+                value = float(token_clean)
             except ValueError:
                 continue
             if not math.isfinite(value):

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import aiosqlite
 from structlog.typing import FilteringBoundLogger
@@ -30,13 +30,14 @@ class DBRepo:
         ts INTEGER NOT NULL
     );
     CREATE TABLE IF NOT EXISTS snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts INTEGER NOT NULL,
         sol REAL NOT NULL,
         usdc REAL NOT NULL,
         price REAL NOT NULL,
-        drift REAL NOT NULL,
-        PRIMARY KEY (ts)
+        drift REAL NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS snapshots_ts_idx ON snapshots(ts);
     """
 
     _DEFAULT_BANDS = (
@@ -52,6 +53,7 @@ class DBRepo:
     async def init(self, settings: "Settings") -> None:
         await self._conn.executescript(self.CREATE_TABLES_SQL)
         await self._conn.commit()
+        await self._ensure_snapshots_schema()
         await self._seed_bands_if_missing()
         await self._upsert_bands_from_env(settings)
 
@@ -122,8 +124,7 @@ class DBRepo:
 
     async def insert_snapshot(self, ts: int, sol: float, usdc: float, price: float, drift: float) -> None:
         await self._conn.execute(
-            "INSERT INTO snapshots(ts, sol, usdc, price, drift) VALUES(?,?,?,?,?) "
-            "ON CONFLICT(ts) DO NOTHING",
+            "INSERT INTO snapshots(ts, sol, usdc, price, drift) VALUES(?,?,?,?,?)",
             (ts, sol, usdc, price, drift),
         )
         await self._conn.commit()
@@ -145,6 +146,72 @@ class DBRepo:
                 (name, low, high),
             )
         await self._conn.commit()
+
+    async def _ensure_snapshots_schema(self) -> None:
+        async with self._conn.execute("PRAGMA table_info(snapshots)") as cur:
+            rows = await cur.fetchall()
+
+        if not rows:
+            return
+
+        column_names: List[str] = [row[1] for row in rows]
+        if "id" in column_names:
+            await self._cleanup_legacy_snapshots_table()
+            return
+
+        await self._conn.execute("BEGIN")
+        try:
+            await self._conn.execute("ALTER TABLE snapshots RENAME TO snapshots_old")
+            await self._conn.executescript(
+                """
+                CREATE TABLE snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts INTEGER NOT NULL,
+                    sol REAL NOT NULL,
+                    usdc REAL NOT NULL,
+                    price REAL NOT NULL,
+                    drift REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS snapshots_ts_idx ON snapshots(ts);
+                """
+            )
+            await self._conn.execute(
+                "INSERT INTO snapshots(ts, sol, usdc, price, drift) "
+                "SELECT ts, sol, usdc, price, drift FROM snapshots_old"
+            )
+            await self._conn.execute("DROP TABLE snapshots_old")
+        except Exception:
+            await self._conn.rollback()
+            raise
+        else:
+            await self._conn.commit()
+        await self._cleanup_legacy_snapshots_table()
+
+    async def _cleanup_legacy_snapshots_table(self) -> None:
+        async with self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='snapshots_old'"
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return
+
+        async with self._conn.execute("SELECT COUNT(1) FROM snapshots") as cur:
+            count_row = await cur.fetchone()
+        current = int(count_row[0]) if count_row and count_row[0] is not None else 0
+
+        await self._conn.execute("BEGIN")
+        try:
+            if current == 0:
+                await self._conn.execute(
+                    "INSERT INTO snapshots(ts, sol, usdc, price, drift) "
+                    "SELECT ts, sol, usdc, price, drift FROM snapshots_old"
+                )
+            await self._conn.execute("DROP TABLE snapshots_old")
+        except Exception:
+            await self._conn.rollback()
+            raise
+        else:
+            await self._conn.commit()
 
     async def _upsert_bands_from_env(self, settings: "Settings") -> None:
         for name, spec in (("a", settings.BAND_A), ("b", settings.BAND_B), ("c", settings.BAND_C)):
