@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, cast
 
 from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -44,6 +45,8 @@ class TelegramSvc:
         app.add_handler(CommandHandler("start", self._on_start))
         app.add_handler(CommandHandler("status", self._on_status))
         app.add_handler(CommandHandler("bands", self._on_bands))
+        app.add_handler(CommandHandler("setbaseline", self._on_setbaseline))
+        app.add_handler(CommandHandler("updatebalances", self._on_updatebalances))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text_any))
         app.add_handler(CallbackQueryHandler(self._on_alert_action, pattern=r"^alert:(accept|ignore|set):[abc]$"))
         app.add_handler(CallbackQueryHandler(self._on_adv_action, pattern=r"^adv:(apply|ignore|set)$"))
@@ -206,6 +209,121 @@ class TelegramSvc:
                 lines.append(f"{name}: {fmt_range(lo, hi)}")
             body = "\n".join(lines)
         await context.bot.send_message(chat_id=self._chat_id, text=body)
+
+    async def _on_setbaseline(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_authorized(update):
+            chat = update.effective_chat
+            if chat is not None:
+                await context.bot.send_message(chat_id=chat.id, text="unauthorized")
+            return
+
+        message = update.message
+        text = message.text if message and message.text else ""
+        parsed = self._parse_two_numbers(text)
+        if parsed is None:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="usage: /setbaseline n sol m usdc",
+            )
+            return
+
+        sol, usdc = parsed
+        sol = max(sol, 0.0)
+        usdc = max(usdc, 0.0)
+        if not (math.isfinite(sol) and math.isfinite(usdc)):
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="usage: /setbaseline n sol m usdc",
+            )
+            return
+
+        repo = self._ensure_repo()
+        ts = int(time.time())
+        await repo.set_baseline(sol, usdc, ts)
+        await context.bot.send_message(
+            chat_id=self._chat_id,
+            text=f"baseline set: {sol:g} sol, {usdc:g} usdc",
+        )
+
+    async def _on_updatebalances(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_authorized(update):
+            chat = update.effective_chat
+            if chat is not None:
+                await context.bot.send_message(chat_id=chat.id, text="unauthorized")
+            return
+
+        message = update.message
+        text = message.text if message and message.text else ""
+        parsed = self._parse_two_numbers(text)
+        if parsed is None:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="usage: /updatebalances x sol y usdc",
+            )
+            return
+
+        sol_amt, usdc_amt = parsed
+        sol_amt = max(sol_amt, 0.0)
+        usdc_amt = max(usdc_amt, 0.0)
+        if not (math.isfinite(sol_amt) and math.isfinite(usdc_amt)):
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="usage: /updatebalances x sol y usdc",
+            )
+            return
+
+        price = await self._get_price()
+        if price is None or not math.isfinite(price) or price <= 0:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="price unavailable, try again later",
+            )
+            return
+
+        repo = self._ensure_repo()
+        baseline = await repo.get_baseline()
+        if baseline is None:
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="baseline not set. run /setbaseline first",
+            )
+            return
+
+        base_sol, base_usdc, _ = baseline
+        base_sol = max(float(base_sol), 0.0)
+        base_usdc = max(float(base_usdc), 0.0)
+
+        base_val = base_sol * price + base_usdc
+        cur_val = sol_amt * price + usdc_amt
+        if not (math.isfinite(base_val) and math.isfinite(cur_val)):
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="unable to compute drift",
+            )
+            return
+
+        drift = cur_val - base_val
+        if not math.isfinite(drift):
+            await context.bot.send_message(
+                chat_id=self._chat_id,
+                text="unable to compute drift",
+            )
+            return
+
+        drift_pct = (drift / base_val) if base_val > 0 else 0.0
+        if not math.isfinite(drift_pct):
+            drift_pct = 0.0
+
+        ts = int(time.time())
+        await repo.insert_snapshot(ts, sol_amt, usdc_amt, price, drift)
+
+        await context.bot.send_message(
+            chat_id=self._chat_id,
+            text=(
+                f"drift: ${drift:.2f} ({drift_pct * 100:.2f}%) | "
+                f"base ${base_val:.2f} → now ${cur_val:.2f} @ p={price:.2f}"
+            ),
+        )
 
     def _bands_menu_text(self, bands: Dict[str, Tuple[float, float]]) -> str:
         if not bands:
@@ -510,6 +628,28 @@ class TelegramSvc:
         )
 
         context.chat_data.pop("await_exact", None)
+
+    def _parse_two_numbers(self, text: str) -> Optional[Tuple[float, float]]:
+        tokens = text.replace(",", " ").split()
+        numbers: list[float] = []
+        for token in tokens:
+            if token.startswith("/"):
+                continue
+            label = token.strip().lower()
+            if label in {"sol", "usdc"}:
+                continue
+            try:
+                value = float(token)
+            except ValueError:
+                continue
+            if not math.isfinite(value):
+                continue
+            numbers.append(value)
+            if len(numbers) == 2:
+                break
+        if len(numbers) < 2:
+            return None
+        return numbers[0], numbers[1]
 
     def _is_authorized(self, update: Update) -> bool:
         chat = update.effective_chat
