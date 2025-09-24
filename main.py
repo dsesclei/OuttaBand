@@ -24,7 +24,7 @@ from fastapi import FastAPI
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from db_repo import dbrepo
-from band_logic import broken_bands, suggest_new_bands
+from band_logic import broken_bands, suggest_with_policy
 import volatility as vol
 from telegram_service import telegramsvc
 
@@ -229,7 +229,11 @@ async def decide_price(client: httpx.AsyncClient) -> Optional[float]:
     return price
 
 
-async def process_breaches(price: float, src_label: str) -> None:
+async def process_breaches(
+    price: float,
+    src_label: str,
+    bucket: Optional[str] = None,
+) -> None:
     assert repo is not None, "db repo not initialized"
     assert tg is not None, "telegram service not initialized"
 
@@ -238,6 +242,9 @@ async def process_breaches(price: float, src_label: str) -> None:
     broken = broken_bands(price, bands)
     cooldown_secs = settings.COOLDOWN_MINUTES * 60
     sent = 0
+
+    effective_bucket = bucket or "mid"
+    warned = False
 
     for name, (lo, hi) in bands.items():
         if name not in broken:
@@ -255,12 +262,25 @@ async def process_breaches(price: float, src_label: str) -> None:
             )
             continue
 
-        suggested = suggest_new_bands(price, bands, {name})
+        if bucket is None and not warned:
+            log.warning("bucket_missing", band=name, side=side, fallback="mid")
+            warned = True
+
+        suggested = suggest_with_policy(price, bands, {name}, effective_bucket)
         rng = suggested.get(name)
         if rng is None:
             rng = bands.get(name)
         if rng is None:
             rng = (price, price)
+        log.info(
+            "breach_offer",
+            band=name,
+            side=side,
+            price=price,
+            bucket=effective_bucket,
+            suggested_lo=rng[0],
+            suggested_hi=rng[1],
+        )
         await tg.send_breach_offer(
             band=name,
             price=price,
@@ -325,7 +345,8 @@ async def check_once() -> None:
             "as_of_ts": sigma["as_of_ts"] if sigma else None,
         }
         log.info("sigma_ok" if sigma else "sigma_miss", **log_kwargs)
-        await process_breaches(price, "meteora")
+        bucket = sigma["bucket"] if sigma else None
+        await process_breaches(price, "meteora", bucket=bucket)
     except Exception as e:
         log.error("job_exception", err=str(e))
 
