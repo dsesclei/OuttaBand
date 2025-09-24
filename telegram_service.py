@@ -18,6 +18,7 @@ from telegram.ext import (
 
 from db_repo import DBRepo
 from band_logic import fmt_range, format_advisory_card
+from band_advisor import split_for_sigma
 from structlog.typing import FilteringBoundLogger
 
 
@@ -231,6 +232,7 @@ class TelegramSvc:
         sigma_bucket = "mid"
         sigma_display = "–"
         sigma_stale = False
+        sigma_pct_value: Optional[float] = None
         if sigma:
             bucket_raw = sigma.get("bucket")
             if isinstance(bucket_raw, str) and bucket_raw:
@@ -238,7 +240,8 @@ class TelegramSvc:
             sigma_pct_val = sigma.get("sigma_pct")
             try:
                 if sigma_pct_val is not None and math.isfinite(float(sigma_pct_val)):
-                    sigma_display = f"{float(sigma_pct_val):.2f}%"
+                    sigma_pct_value = float(sigma_pct_val)
+                    sigma_display = f"{sigma_pct_value:.2f}%"
             except (TypeError, ValueError):
                 sigma_display = "–"
             sigma_stale = bool(sigma.get("stale"))
@@ -253,6 +256,9 @@ class TelegramSvc:
                 lines.append(f"{name}: {fmt_range(lo, hi)}")
         else:
             lines.append("(none)")
+
+        split = split_for_sigma(sigma_pct_value)
+        lines.append(f"advisory split: {split[0]}/{split[1]}/{split[2]}")
 
         if price is not None and math.isfinite(price) and price > 0 and baseline and latest:
             base_sol, base_usdc, _ = baseline
