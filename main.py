@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: int
 
     METEORA_PAIR_ADDRESS: str
+    METEORA_BASE_URL: str = "https://dlmm-api.meteora.ag"
 
     CHECK_EVERY_MINUTES: int = 15
     COOLDOWN_MINUTES: int = 60
@@ -225,7 +226,8 @@ async def fetch_json_with_retries(
 # ----------------------------
 
 async def fetch_meteora_price(client: httpx.AsyncClient, pair_address: str) -> Optional[float]:
-    url = f"https://dlmm-api.meteora.ag/pair/{pair_address}"
+    base_url = settings.METEORA_BASE_URL.rstrip("/")
+    url = f"{base_url}/pair/{pair_address}"
     data = await fetch_json_with_retries(client, "GET", url)
     if data is None:
         return None
@@ -522,6 +524,7 @@ async def lifespan(app: FastAPI):
     }
     log.info(
         "config_ok",
+        meteora_url=settings.METEORA_BASE_URL,
         binance_url=settings.BINANCE_BASE_URL,
         binance_symbol=settings.BINANCE_SYMBOL,
         daily_hour=settings.DAILY_HOUR_UTC,
