@@ -107,9 +107,11 @@ class TelegramSvc:
         )
 
         buttons = [
-            [InlineKeyboardButton("apply all", callback_data="adv:apply")],
-            [InlineKeyboardButton("set exact", callback_data="adv:set")],
-            [InlineKeyboardButton("ignore", callback_data="adv:ignore")],
+            [
+                InlineKeyboardButton("apply all", callback_data="adv:apply"),
+                InlineKeyboardButton("set exact", callback_data="adv:set"),
+                InlineKeyboardButton("ignore", callback_data="adv:ignore"),
+            ]
         ]
 
         message = await app.bot.send_message(
@@ -566,7 +568,23 @@ class TelegramSvc:
 
         if action == "apply":
             repo = self._ensure_repo()
-            await repo.upsert_many(ranges)
+            try:
+                await repo.upsert_many(ranges)
+            except Exception as exc:
+                if self._log is not None:
+                    try:
+                        self._log.error(
+                            "advisory_apply_failed",
+                            error=str(exc),
+                        )
+                    except Exception:
+                        pass
+                await context.bot.send_message(
+                    chat_id=self._chat_id,
+                    text="apply failed, please retry",
+                )
+                return
+
             del self._pending[mid]
             summary = ", ".join(
                 f"{name}→{fmt_range(*rng)}" for name, rng in sorted(ranges.items())
