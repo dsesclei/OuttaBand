@@ -505,6 +505,8 @@ async def lifespan(app: FastAPI):
             timezone=timezone.utc,
             coalesce=True,
             misfire_grace_time=300,
+            max_instances=1,
+            jitter=30,
         )
     scheduler.start()
     log.info("app_start", interval_min=settings.CHECK_EVERY_MINUTES)
