@@ -13,7 +13,7 @@ import random
 import time
 from contextlib import asynccontextmanager
 from datetime import timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import aiosqlite
 import httpx
@@ -256,10 +256,12 @@ async def process_breaches(
         effective_bucket,
         include_a_on_high=False,
     )
-    high_bucket_a: Optional[Tuple[float, float]] = None
-
     for name, (lo, hi) in bands.items():
         if name not in broken:
+            continue
+
+        if effective_bucket == "high" and name == "a":
+            # don't touch a in high vol unless explicitly asked
             continue
 
         side = "below" if price < lo else "above"
@@ -279,16 +281,6 @@ async def process_breaches(
             warned = True
 
         rng = suggested_map.get(name)
-        if rng is None:
-            if name == "a" and effective_bucket == "high":
-                # don't touch a in high vol unless explicitly asked
-                if high_bucket_a is None:
-                    high_bucket_a = band_advisor.ranges_for_price(
-                        price,
-                        "high",
-                        include_a_on_high=True,
-                    ).get("a")
-                rng = high_bucket_a
         if rng is None:
             continue
 

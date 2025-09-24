@@ -45,6 +45,12 @@ def suggest_with_policy(
     broken: Set[str],
     bucket: str,
 ) -> Dict[str, Tuple[float, float]]:
+    """Return updated band suggestions while respecting high-vol skip rules.
+
+    The helper builds fresh ranges via ``band_advisor.ranges_for_price`` with
+    ``include_a_on_high=False`` so band ``"a"`` is omitted during high
+    volatility buckets unless explicitly requested by the caller.
+    """
     suggested = band_advisor.ranges_for_price(
         price,
         bucket,
@@ -63,8 +69,9 @@ def suggest_new_bands(
     bands: Dict[str, Tuple[float, float]],
     broken: Set[str],
 ) -> Dict[str, Tuple[float, float]]:
-    # Deprecated: migrate callers to suggest_with_policy so they can supply a bucket.
-    return suggest_with_policy(price, bands, broken, bucket="mid")
+    raise NotImplementedError(
+        "use suggest_with_policy(price, bands, broken, bucket)"
+    )
 
 
 def format_advisory_card(
