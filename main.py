@@ -23,6 +23,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from zoneinfo import ZoneInfo
 
 from db_repo import dbrepo
 from band_logic import broken_bands
@@ -55,20 +56,23 @@ class Settings(BaseSettings):
     VOL_CACHE_TTL_SECONDS: int = 60
     VOL_MAX_STALE_SECONDS: int = 7200
 
-    DAILY_HOUR_UTC: int = 12
-    DAILY_MINUTE_UTC: int = 0
+    LOCAL_TZ: str = "America/New_York"
+    DAILY_LOCAL_HOUR: int = 8
+    DAILY_LOCAL_MINUTE: int = 0
+    DAILY_HOUR_UTC: Optional[int] = None
+    DAILY_MINUTE_UTC: Optional[int] = None
     DAILY_ENABLED: bool = True
     INCLUDE_A_ON_HIGH: bool = False
 
     # pydantic v2 config: .env file, case-insensitive for ops sanity
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
     @model_validator(mode="after")
     def _validate(self) -> "Settings":
-        if not (0 <= self.DAILY_HOUR_UTC <= 23):
-            raise ValueError("DAILY_HOUR_UTC must be between 0 and 23 inclusive")
-        if not (0 <= self.DAILY_MINUTE_UTC <= 59):
-            raise ValueError("DAILY_MINUTE_UTC must be between 0 and 59 inclusive")
+        if not (0 <= self.DAILY_LOCAL_HOUR <= 23):
+            raise ValueError("DAILY_LOCAL_HOUR must be between 0 and 23 inclusive")
+        if not (0 <= self.DAILY_LOCAL_MINUTE <= 59):
+            raise ValueError("DAILY_LOCAL_MINUTE must be between 0 and 59 inclusive")
         if self.VOL_CACHE_TTL_SECONDS < 5:
             raise ValueError("VOL_CACHE_TTL_SECONDS must be at least 5 seconds")
         if self.VOL_MAX_STALE_SECONDS < self.VOL_CACHE_TTL_SECONDS:
@@ -77,10 +81,16 @@ class Settings(BaseSettings):
             raise ValueError("COOLDOWN_MINUTES must be at least 1")
         if self.CHECK_EVERY_MINUTES < 1:
             raise ValueError("CHECK_EVERY_MINUTES must be at least 1")
+        try:
+            ZoneInfo(self.LOCAL_TZ)
+        except Exception as exc:  # pragma: no cover - defensive, requires malformed tz name
+            raise ValueError(f"Invalid LOCAL_TZ '{self.LOCAL_TZ}'") from exc
         return self
 
 
 settings = Settings()
+local_tz = ZoneInfo(settings.LOCAL_TZ)
+LEGACY_DAILY_UTC_SET = settings.DAILY_HOUR_UTC is not None or settings.DAILY_MINUTE_UTC is not None
 
 
 # ----------------------------
@@ -522,13 +532,21 @@ async def lifespan(app: FastAPI):
         }.items()
         if value is not None
     }
+    if LEGACY_DAILY_UTC_SET:
+        log.warning(
+            "deprecated_daily_utc_config",
+            daily_hour_utc=settings.DAILY_HOUR_UTC,
+            daily_minute_utc=settings.DAILY_MINUTE_UTC,
+        )
+
     log.info(
         "config_ok",
         meteora_url=settings.METEORA_BASE_URL,
         binance_url=settings.BINANCE_BASE_URL,
         binance_symbol=settings.BINANCE_SYMBOL,
-        daily_hour=settings.DAILY_HOUR_UTC,
-        daily_minute=settings.DAILY_MINUTE_UTC,
+        local_tz=settings.LOCAL_TZ,
+        daily_hour=settings.DAILY_LOCAL_HOUR,
+        daily_minute=settings.DAILY_LOCAL_MINUTE,
         include_a_on_high=settings.INCLUDE_A_ON_HIGH,
         band_seeds=band_seeds,
     )
@@ -556,16 +574,22 @@ async def lifespan(app: FastAPI):
         scheduler.add_job(
             send_daily_advisory,
             "cron",
-            hour=settings.DAILY_HOUR_UTC,
-            minute=settings.DAILY_MINUTE_UTC,
-            timezone=timezone.utc,
+            hour=settings.DAILY_LOCAL_HOUR,
+            minute=settings.DAILY_LOCAL_MINUTE,
+            timezone=local_tz,
             coalesce=True,
             misfire_grace_time=300,
             max_instances=1,
             jitter=30,
         )
     scheduler.start()
-    log.info("app_start", interval_min=settings.CHECK_EVERY_MINUTES)
+    log.info(
+        "app_start",
+        interval_min=settings.CHECK_EVERY_MINUTES,
+        tz=settings.LOCAL_TZ,
+        daily_hour=settings.DAILY_LOCAL_HOUR,
+        daily_minute=settings.DAILY_LOCAL_MINUTE,
+    )
 
     try:
         yield
