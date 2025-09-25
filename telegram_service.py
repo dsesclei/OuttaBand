@@ -324,6 +324,7 @@ class TelegramSvc:
             "<code>/settilt &lt;sol&gt;:&lt;usdc&gt;</code> — inside-band split, sol first (e.g. 50:50, 60:40)",
             "<code>/updatebalances &lt;sol&gt; sol &lt;usdc&gt; usdc</code>",
             "<code>/help</code> — show this list",
+            "Token amounts are advisory (tilt-based), not exact DLMM quotes.",
         ]
         await context.bot.send_message(
             chat_id=self._chat_id,

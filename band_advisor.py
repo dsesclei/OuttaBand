@@ -86,7 +86,14 @@ def compute_amounts(
     sol_decimals: int = 6,
     usdc_decimals: int = 2,
 ) -> Tuple[Dict[str, Tuple[float, float]], float]:
-    """Compute per-band token amounts using a simple tilt heuristic."""
+    """Compute per-band token amounts using a simple tilt heuristic.
+
+    The routine is advisory only: it applies a naive inside-band tilt to the
+    configured notional without modelling DLMM bin distribution or mint quotes,
+    so actual on-chain requirements will differ. When a band is absent from the
+    provided ranges (e.g. band ``"a"`` is skipped during high volatility) its
+    share remains unallocated unless ``redistribute_skipped`` is set.
+    """
 
     if (
         notional_usd is None
