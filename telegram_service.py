@@ -19,7 +19,7 @@ from telegram.ext import (
 
 from db_repo import DBRepo
 from band_logic import fmt_range, format_advisory_card
-from band_advisor import compute_amounts, split_for_bucket, split_for_sigma
+from band_advisor import compute_amounts, ranges_for_price, split_for_bucket, split_for_sigma
 from structlog.typing import FilteringBoundLogger
 
 
@@ -357,11 +357,59 @@ class TelegramSvc:
             f"<b>Advisory Split</b>: {split[0]}/{split[1]}/{split[2]} ({escape(sigma_bucket_label)})"
         )
 
+        notional = await repo.get_notional_usd()
+        tilt_sol_frac = await repo.get_tilt_sol_frac()
+        usdc_frac = 1.0 - tilt_sol_frac
+        sol_pct = self._format_pct(tilt_sol_frac)
+        usdc_pct = self._format_pct(usdc_frac)
+        if notional is None or notional <= 0:
+            notional_display = "unset"
+        else:
+            notional_display = f"${notional:.2f}"
+        lines.append(
+            f"notional: {escape(notional_display)} | tilt sol/usdc: {escape(sol_pct)}/{escape(usdc_pct)}"
+        )
+
         if latest:
             _snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
             lines.append(f"<b>Balances</b>: {snap_sol:g} SOL, {snap_usdc:g} USDC")
         else:
             lines.append("<b>Balances</b>: (none; run /updatebalances)")
+
+        if (
+            notional is not None
+            and notional > 0
+            and price is not None
+            and math.isfinite(price)
+            and price > 0
+        ):
+            try:
+                planned_ranges = ranges_for_price(
+                    price,
+                    sigma_bucket,
+                    include_a_on_high=False,
+                )
+            except ValueError:
+                planned_ranges = {}
+
+            if planned_ranges:
+                amounts_map, unallocated_usd = compute_amounts(
+                    price,
+                    split,
+                    planned_ranges,
+                    notional,
+                    tilt_sol_frac,
+                )
+                if amounts_map:
+                    for band_name in ("a", "b", "c"):
+                        if band_name not in amounts_map:
+                            continue
+                        sol_amt, usdc_amt = amounts_map[band_name]
+                        lines.append(
+                            f"{escape(band_name.upper())} amount: {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC"
+                        )
+                    if unallocated_usd > 0.005:
+                        lines.append(f"unallocated: ${unallocated_usd:.2f}")
 
         if price is not None and math.isfinite(price) and price > 0 and baseline and latest:
             base_sol, base_usdc, _ = baseline
