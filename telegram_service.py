@@ -208,12 +208,44 @@ class TelegramSvc:
             f"<b>Current {band_label}</b>: {fmt_range(*current)}\n"
             f"<b>Suggested {band_label}</b>: {fmt_range(*suggested_range)}"
         )
+        bucket = None
         if policy_meta is not None:
             bucket, width = policy_meta
             bucket_label = escape(bucket.title())
             text = (
                 f"{text}\n<i>Policy</i>: {bucket_label} (±{width * 100:.2f}%)"
             )
+
+        repo = self._ensure_repo()
+        notional = await repo.get_notional_usd()
+        tilt_sol_frac = await repo.get_tilt_sol_frac()
+
+        amount_line: Optional[str] = None
+        if (
+            bucket is not None
+            and notional is not None
+            and notional > 0
+            and price > 0
+            and math.isfinite(price)
+        ):
+            try:
+                split = split_for_bucket(bucket)
+            except ValueError:
+                split = None
+            if split:
+                bands_order = ("a", "b", "c")
+                pct = next((share for name, share in zip(bands_order, split) if name == band), None)
+                if pct is not None and pct > 0:
+                    per_band_usd = (notional * pct) / 100.0
+                    tilt = min(max(tilt_sol_frac, 0.0), 1.0)
+                    sol_amt = round((per_band_usd * tilt) / price, 6)
+                    usdc_amt = round(per_band_usd * (1.0 - tilt), 2)
+                    amount_line = (
+                        f"amount: {sol_amt:.6f} SOL / ${usdc_amt:.2f}"
+                    )
+
+        if amount_line:
+            text = f"{text}\n{amount_line}"
         buttons = [
             [
                 InlineKeyboardButton("Apply", callback_data=f"alert:accept:{band}"),
