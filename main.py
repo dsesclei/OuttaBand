@@ -58,8 +58,6 @@ class Settings(BaseSettings):
     LOCAL_TZ: str = "America/New_York"
     DAILY_LOCAL_HOUR: int = 8
     DAILY_LOCAL_MINUTE: int = 0
-    DAILY_HOUR_UTC: Optional[int] = None
-    DAILY_MINUTE_UTC: Optional[int] = None
     DAILY_ENABLED: bool = True
     INCLUDE_A_ON_HIGH: bool = False
 
@@ -89,7 +87,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 local_tz = ZoneInfo(settings.LOCAL_TZ)
-LEGACY_DAILY_UTC_SET = settings.DAILY_HOUR_UTC is not None or settings.DAILY_MINUTE_UTC is not None
 
 SLOT_SECONDS = max(60, settings.CHECK_EVERY_MINUTES * 60)
 
@@ -551,13 +548,6 @@ async def lifespan(app: FastAPI):
         }.items()
         if value is not None
     }
-    if LEGACY_DAILY_UTC_SET:
-        log.warning(
-            "deprecated_daily_utc_config",
-            daily_hour_utc=settings.DAILY_HOUR_UTC,
-            daily_minute_utc=settings.DAILY_MINUTE_UTC,
-        )
-
     if 60 % max(1, settings.CHECK_EVERY_MINUTES) == 0:
         minutes_str = ",".join(
             str(minute) for minute in range(0, 60, settings.CHECK_EVERY_MINUTES)
