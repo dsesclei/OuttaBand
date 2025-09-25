@@ -12,7 +12,6 @@ import os
 import random
 import time
 from contextlib import asynccontextmanager
-from datetime import timezone
 from typing import Any, Dict, Optional
 
 import aiosqlite
@@ -539,6 +538,18 @@ async def lifespan(app: FastAPI):
             daily_minute_utc=settings.DAILY_MINUTE_UTC,
         )
 
+    if 60 % max(1, settings.CHECK_EVERY_MINUTES) == 0:
+        minutes_str = ",".join(
+            str(minute) for minute in range(0, 60, settings.CHECK_EVERY_MINUTES)
+        )
+    else:
+        minutes_str = "0,15,30,45"
+        log.warning(
+            "non_divisor_interval",
+            interval=settings.CHECK_EVERY_MINUTES,
+            using=minutes_str,
+        )
+
     log.info(
         "config_ok",
         meteora_url=settings.METEORA_BASE_URL,
@@ -560,15 +571,16 @@ async def lifespan(app: FastAPI):
     tg.set_sigma_provider(get_sigma_reading)
 
     # scheduler with explicit timezone and sane semantics
-    scheduler = AsyncIOScheduler(timezone=timezone.utc)
+    scheduler = AsyncIOScheduler(timezone=local_tz)
     scheduler.add_job(
         check_once,
-        "interval",
-        minutes=max(1, settings.CHECK_EVERY_MINUTES),
-        jitter=30,            # up to +30s
-        coalesce=True,        # collapse missed runs to one
-        max_instances=1,      # never overlap
-        misfire_grace_time=60 # small grace
+        "cron",
+        minute=minutes_str,
+        second=0,
+        timezone=local_tz,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=120,
     )
     if settings.DAILY_ENABLED:
         scheduler.add_job(
@@ -578,14 +590,15 @@ async def lifespan(app: FastAPI):
             minute=settings.DAILY_LOCAL_MINUTE,
             timezone=local_tz,
             coalesce=True,
-            misfire_grace_time=300,
+            second=0,
+            misfire_grace_time=1800,
             max_instances=1,
-            jitter=30,
         )
     scheduler.start()
     log.info(
         "app_start",
         interval_min=settings.CHECK_EVERY_MINUTES,
+        schedule_minutes=minutes_str,
         tz=settings.LOCAL_TZ,
         daily_hour=settings.DAILY_LOCAL_HOUR,
         daily_minute=settings.DAILY_LOCAL_MINUTE,
