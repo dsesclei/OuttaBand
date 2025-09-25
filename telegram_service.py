@@ -19,7 +19,7 @@ from telegram.ext import (
 
 from db_repo import DBRepo
 from band_logic import fmt_range, format_advisory_card
-from band_advisor import split_for_sigma
+from band_advisor import compute_amounts, split_for_bucket, split_for_sigma
 from structlog.typing import FilteringBoundLogger
 
 
@@ -115,11 +115,42 @@ class TelegramSvc:
         app = self._ensure_app()
         await self._ready.wait()
 
+        repo = self._ensure_repo()
+
         price = float(advisory["price"])
         sigma_pct = cast(Optional[float], advisory.get("sigma_pct"))
         bucket = str(advisory["bucket"])
-        split = cast(Tuple[int, int, int], cast(Any, advisory["split"]))
         ranges = cast(Dict[str, Tuple[float, float]], cast(Any, advisory["ranges"]))
+
+        split_raw = advisory.get("split")
+        split: Optional[Tuple[int, int, int]] = None
+        if isinstance(split_raw, (list, tuple)) and len(split_raw) == 3:
+            try:
+                split = (
+                    int(float(split_raw[0])),
+                    int(float(split_raw[1])),
+                    int(float(split_raw[2])),
+                )
+            except (TypeError, ValueError):
+                split = None
+        if split is None:
+            try:
+                split = split_for_bucket(bucket)
+            except ValueError:
+                split = split_for_sigma(sigma_pct)
+        if split is None:
+            split = split_for_sigma(sigma_pct)
+
+        notional = await repo.get_notional_usd()
+        tilt = await repo.get_tilt_sol_frac()
+
+        amounts_map, unallocated_usd = compute_amounts(
+            price,
+            split,
+            ranges,
+            notional,
+            tilt,
+        )
 
         text = format_advisory_card(
             price,
@@ -128,6 +159,8 @@ class TelegramSvc:
             ranges,
             split,
             stale=bool(advisory.get("stale")),
+            amounts=amounts_map or None,
+            unallocated_usd=unallocated_usd if unallocated_usd > 0 else None,
         )
         if drift_line is not None:
             text = f"{text}\n{drift_line}"

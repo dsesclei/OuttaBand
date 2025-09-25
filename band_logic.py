@@ -65,6 +65,8 @@ def suggest_with_policy(
             continue
         new_bands[name] = suggested[name]
     return new_bands
+
+
 def format_advisory_card(
     price: float,
     sigma_pct: Optional[float],
@@ -73,6 +75,8 @@ def format_advisory_card(
     split: Tuple[int, int, int],
     *,
     stale: bool = False,
+    amounts: Optional[Dict[str, Tuple[float, float]]] = None,
+    unallocated_usd: Optional[float] = None,
 ) -> str:
     sigma_display = "–"
     if sigma_pct is not None:
@@ -97,8 +101,15 @@ def format_advisory_card(
         if width is None:
             continue
         pct_display = f"±{width * 100:.2f}%"
-        lines.append(
-            f"<b>{escape(name.upper())}</b> ({pct_display}): {fmt_range(lo, hi)}"
-        )
+        line = f"<b>{escape(name.upper())}</b> ({pct_display}): {fmt_range(lo, hi)}"
+        if amounts and name in amounts:
+            sol_amt, usdc_amt = amounts[name]
+            line = (
+                f"{line} → {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC"
+            )
+        lines.append(line)
+
+    if unallocated_usd is not None and unallocated_usd > 0.005:
+        lines.append(f"<i>Unallocated</i>: ${unallocated_usd:.2f}")
 
     return "\n".join(lines)
