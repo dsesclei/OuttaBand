@@ -274,11 +274,14 @@ async def process_breaches(
     price: float,
     src_label: str,
     bucket: Optional[str] = None,
+    *,
+    now_slot_ts: Optional[int] = None,
 ) -> None:
     assert repo is not None, "db repo not initialized"
     assert tg is not None, "telegram service not initialized"
 
-    now_aligned = floor_to_slot(int(time.time()))
+    base_ts = int(time.time()) if now_slot_ts is None else int(now_slot_ts)
+    now_aligned = floor_to_slot(base_ts)
     bands = await repo.get_bands()
     broken = broken_bands(price, bands)
     cooldown_secs = settings.COOLDOWN_MINUTES * 60
@@ -434,7 +437,13 @@ async def check_once() -> None:
         }
         log.info("sigma_ok" if sigma else "sigma_miss", **log_kwargs)
         bucket = sigma["bucket"] if sigma else None
-        await process_breaches(price, "meteora", bucket=bucket)
+        current_slot_ts = floor_to_slot(int(time.time()))
+        await process_breaches(
+            price,
+            "meteora",
+            bucket=bucket,
+            now_slot_ts=current_slot_ts,
+        )
     except Exception as e:
         log.error("job_exception", err=str(e))
 
