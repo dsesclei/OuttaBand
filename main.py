@@ -549,18 +549,23 @@ async def lifespan(app: FastAPI):
         }.items()
         if value is not None
     }
-    if 60 % max(1, settings.CHECK_EVERY_MINUTES) == 0:
+    interval_minutes = max(1, settings.CHECK_EVERY_MINUTES)
+    if 60 % interval_minutes == 0:
         minutes_str = ",".join(
-            str(minute) for minute in range(0, 60, settings.CHECK_EVERY_MINUTES)
+            str(minute) for minute in range(0, 60, interval_minutes)
         )
+        slot_seconds = max(60, interval_minutes * 60)
     else:
         minutes_str = "0,15,30,45"
+        slot_seconds = 15 * 60
         log.warning(
             "non_divisor_interval",
             interval=settings.CHECK_EVERY_MINUTES,
             using=minutes_str,
         )
 
+    global SLOT_SECONDS
+    SLOT_SECONDS = slot_seconds
     log.info("cooldown_quantization", slot_seconds=SLOT_SECONDS)
 
     log.info(
