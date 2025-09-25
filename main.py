@@ -303,6 +303,7 @@ async def process_breaches(
 
         side = "below" if price < lo else "above"
 
+        # Persisted rows pre-date slot quantization, so floor before comparing.
         last = await repo.get_last_alert(name, side)
         last_aligned = floor_to_slot(last) if last is not None else None
         if last_aligned is not None:
@@ -559,6 +560,8 @@ async def lifespan(app: FastAPI):
             interval=settings.CHECK_EVERY_MINUTES,
             using=minutes_str,
         )
+
+    log.info("cooldown_quantization", slot_seconds=SLOT_SECONDS)
 
     log.info(
         "config_ok",

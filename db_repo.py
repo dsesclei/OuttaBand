@@ -95,6 +95,7 @@ class DBRepo:
             await self._conn.commit()
 
     async def get_last_alert(self, band: str, side: str) -> Optional[int]:
+        """Return raw timestamp; callers handle slot quantization for back-compat."""
         async with self._conn.execute(
             "SELECT last_sent_ts FROM alerts WHERE band=? AND side=?",
             (band, side),
