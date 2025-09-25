@@ -91,6 +91,13 @@ settings = Settings()
 local_tz = ZoneInfo(settings.LOCAL_TZ)
 LEGACY_DAILY_UTC_SET = settings.DAILY_HOUR_UTC is not None or settings.DAILY_MINUTE_UTC is not None
 
+SLOT_SECONDS = max(60, settings.CHECK_EVERY_MINUTES * 60)
+
+
+def floor_to_slot(ts: int) -> int:
+    """Snap a unix timestamp down to the current scheduling slot boundary."""
+    return (ts // SLOT_SECONDS) * SLOT_SECONDS
+
 
 # ----------------------------
 # Globals
@@ -271,7 +278,7 @@ async def process_breaches(
     assert repo is not None, "db repo not initialized"
     assert tg is not None, "telegram service not initialized"
 
-    now_ts = int(time.time())
+    now_aligned = floor_to_slot(int(time.time()))
     bands = await repo.get_bands()
     broken = broken_bands(price, bands)
     cooldown_secs = settings.COOLDOWN_MINUTES * 60
@@ -297,14 +304,18 @@ async def process_breaches(
         side = "below" if price < lo else "above"
 
         last = await repo.get_last_alert(name, side)
-        if last is not None and (now_ts - last) < cooldown_secs:
-            log.info(
-                "cooldown_skip",
-                band=name,
-                side=side,
-                seconds_remaining=cooldown_secs - (now_ts - last),
-            )
-            continue
+        last_aligned = floor_to_slot(last) if last is not None else None
+        if last_aligned is not None:
+            delta = now_aligned - last_aligned
+            if delta < cooldown_secs:
+                seconds_remaining = cooldown_secs - delta
+                log.info(
+                    "cooldown_skip",
+                    band=name,
+                    side=side,
+                    seconds_remaining=seconds_remaining,
+                )
+                continue
 
         if bucket is None and not warned:
             log.warning("bucket_missing", band=name, side=side, fallback="mid")
@@ -332,7 +343,7 @@ async def process_breaches(
             suggested_range=rng,
             policy_meta=(effective_bucket, width) if width is not None else None,
         )
-        await repo.set_last_alert(name, side, now_ts)
+        await repo.set_last_alert(name, side, now_aligned)
         sent += 1
 
     if sent == 0:
