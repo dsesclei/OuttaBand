@@ -222,15 +222,23 @@ class DBRepo:
         await self._conn.commit()
 
     async def _ensure_snapshots_schema(self) -> None:
+        schema_version = await self._get_schema_version()
+        if schema_version is not None and schema_version >= 1:
+            return
+
         async with self._conn.execute("PRAGMA table_info(snapshots)") as cur:
             rows = await cur.fetchall()
 
         if not rows:
+            if schema_version is None:
+                await self.set_pref("schema_version", "1")
             return
 
         column_names: List[str] = [row[1] for row in rows]
         if "id" in column_names:
             await self._cleanup_legacy_snapshots_table()
+            if schema_version is None:
+                await self.set_pref("schema_version", "1")
             return
 
         await self._conn.execute("BEGIN")
@@ -260,6 +268,7 @@ class DBRepo:
         else:
             await self._conn.commit()
         await self._cleanup_legacy_snapshots_table()
+        await self.set_pref("schema_version", "1")
 
     async def _cleanup_legacy_snapshots_table(self) -> None:
         async with self._conn.execute(
@@ -351,6 +360,15 @@ class DBRepo:
         if lo >= hi:
             raise ValueError(f"Band '{name}': low must be < high")
         return lo, hi
+
+    async def _get_schema_version(self) -> Optional[int]:
+        raw = await self.get_pref("schema_version")
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _ranges_close(
