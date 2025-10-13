@@ -38,6 +38,10 @@ docker compose up --build
 
 Compose uses the same Dockerfile and automatically loads `.env` via `env_file`. A `./data` volume is mounted into `/data`, so `data/app.db` survives restarts. Stream logs with `docker compose logs -f lpbot` and verify `/healthz` returns `ok=true` before relying on Telegram alerts.
 
+## Continuous integration
+
+GitHub Actions runs pytest on Python 3.11 and builds the Docker image on every push and PR targeting `main`.
+
 ## Configuration
 
 All settings are provided via environment variables (pydantic-settings, case-insensitive):
