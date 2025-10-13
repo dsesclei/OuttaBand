@@ -23,6 +23,7 @@ class DBRepo:
         last_sent_ts INTEGER,
         PRIMARY KEY (band, side)
     );
+    -- alerts table uses its composite primary key for lookups; no extra index required.
     CREATE TABLE IF NOT EXISTS baseline (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         sol REAL NOT NULL,
@@ -69,10 +70,11 @@ class DBRepo:
         return out
 
     async def upsert_band(self, name: str, low: float, high: float) -> None:
+        lo, hi = self._normalize_band_range(name, low, high)
         await self._conn.execute(
             "INSERT INTO bands(name, low, high) VALUES(?,?,?) "
             "ON CONFLICT(name) DO UPDATE SET low=excluded.low, high=excluded.high",
-            (name, low, high),
+            (name, lo, hi),
         )
         await self._conn.commit()
 
@@ -80,14 +82,33 @@ class DBRepo:
         if not items:
             return
 
+        normalized: list[Tuple[str, float, float]] = []
+        errors: Dict[str, str] = {}
+        for name, (low, high) in items.items():
+            try:
+                lo, hi = self._normalize_band_range(name, low, high)
+            except ValueError as exc:
+                reason = str(exc)
+                errors[name] = reason
+                if self._log is not None:
+                    self._log.warning("band_upsert_invalid", band=name, reason=reason)
+            else:
+                normalized.append((name, lo, hi))
+
+        if errors:
+            joined = "; ".join(errors.values())
+            raise ValueError(f"Invalid band ranges: {joined}")
+
+        if not normalized:
+            return
+
         await self._conn.execute("BEGIN IMMEDIATE")
         try:
-            for name, (low, high) in items.items():
-                await self._conn.execute(
-                    "INSERT INTO bands(name, low, high) VALUES(?,?,?) "
-                    "ON CONFLICT(name) DO UPDATE SET low=excluded.low, high=excluded.high",
-                    (name, low, high),
-                )
+            await self._conn.executemany(
+                "INSERT INTO bands(name, low, high) VALUES(?,?,?) "
+                "ON CONFLICT(name) DO UPDATE SET low=excluded.low, high=excluded.high",
+                normalized,
+            )
         except Exception:
             await self._conn.rollback()
             raise
@@ -317,6 +338,19 @@ class DBRepo:
             return (lo, hi)
         except Exception:
             return None
+
+    @staticmethod
+    def _normalize_band_range(name: str, low: float, high: float) -> Tuple[float, float]:
+        try:
+            lo = float(low)
+            hi = float(high)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Band '{name}': low/high must be numeric") from exc
+        if not math.isfinite(lo) or not math.isfinite(hi):
+            raise ValueError(f"Band '{name}': low/high must be finite")
+        if lo >= hi:
+            raise ValueError(f"Band '{name}': low must be < high")
+        return lo, hi
 
     @staticmethod
     def _ranges_close(
