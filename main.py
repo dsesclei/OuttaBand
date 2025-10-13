@@ -30,7 +30,7 @@ import band_advisor
 import volatility as vol
 from telegram_service import TelegramSvc
 import net
-from shared_types import AdvisoryPayload, BandMap, BandName, Bucket
+from shared_types import BAND_ORDER, AdvisoryPayload, BandMap, BandName, Bucket
 
 
 # ----------------------------
@@ -546,15 +546,8 @@ async def lifespan(app: FastAPI):
     )
     await tg.start(repo)
 
-    band_seeds = {
-        name: value
-        for name, value in {
-            "a": settings.BAND_A,
-            "b": settings.BAND_B,
-            "c": settings.BAND_C,
-        }.items()
-        if value is not None
-    }
+    band_seed_values = (settings.BAND_A, settings.BAND_B, settings.BAND_C)
+    band_seeds = {name: value for name, value in zip(BAND_ORDER, band_seed_values) if value is not None}
     interval_minutes = max(1, settings.CHECK_EVERY_MINUTES)
     slot_seconds = max(60, interval_minutes * 60)
 

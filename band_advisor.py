@@ -24,19 +24,19 @@ from shared_types import (
 
 _BUCKET_WIDTHS: dict[Bucket, PolicyWidthMap] = {
     "low": {
-        "a": 0.0035,
-        "b": 0.011,
-        "c": 0.018,
+        BAND_ORDER[0]: 0.0035,
+        BAND_ORDER[1]: 0.011,
+        BAND_ORDER[2]: 0.018,
     },
     "mid": {
-        "a": 0.006,
-        "b": 0.018,
-        "c": 0.030,
+        BAND_ORDER[0]: 0.006,
+        BAND_ORDER[1]: 0.018,
+        BAND_ORDER[2]: 0.030,
     },
     "high": {
-        "a": 0.009,
-        "b": 0.025,
-        "c": 0.040,
+        BAND_ORDER[0]: 0.009,
+        BAND_ORDER[1]: 0.025,
+        BAND_ORDER[2]: 0.040,
     },
 }
 
@@ -163,7 +163,7 @@ def ranges_for_price(
     widths, skip_a = widths_for_bucket(bucket)
     ranges: BandMap = {}
     for band, width in widths.items():
-        if skip_a and band == "a" and not include_a_on_high:
+        if skip_a and band == BAND_ORDER[0] and not include_a_on_high:
             continue
         delta = price * width
         ranges[band] = (price - delta, price + delta)

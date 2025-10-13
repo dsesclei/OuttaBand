@@ -1,6 +1,7 @@
 import math
 
 import band_advisor
+from shared_types import BAND_ORDER
 
 
 def test_compute_amounts_without_redistribute_keeps_unallocated_share() -> None:
@@ -17,7 +18,7 @@ def test_compute_amounts_without_redistribute_keeps_unallocated_share() -> None:
         redistribute_skipped=False,
     )
 
-    assert "a" not in amounts
+    assert BAND_ORDER[0] not in amounts
     assert unallocated > 0.0
 
     sol_usd = sum(sol * price for sol, _ in amounts.values())
@@ -41,7 +42,7 @@ def test_compute_amounts_with_redistribute_fills_missing_share() -> None:
         redistribute_skipped=True,
     )
 
-    assert "a" not in amounts
+    assert BAND_ORDER[0] not in amounts
     assert math.isclose(unallocated, 0.0, abs_tol=1e-6)
 
     total_usd = sum(sol_amt * price + usdc_amt for sol_amt, usdc_amt in amounts.values())

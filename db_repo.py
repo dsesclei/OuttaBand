@@ -8,7 +8,7 @@ from typing import Final, TYPE_CHECKING
 import aiosqlite
 from structlog.typing import FilteringBoundLogger
 
-from shared_types import BandMap, BandRange, Baseline, Side, Snapshot, BandName
+from shared_types import BAND_ORDER, BandMap, BandRange, Baseline, BandName, Side, Snapshot
 
 if TYPE_CHECKING:  # pragma: no cover - used only for type hints
     from main import Settings
@@ -64,10 +64,8 @@ class DBRepo:
     );
     """
 
-    _DEFAULT_BANDS: Final[tuple[tuple[BandName, float, float], ...]] = (
-        ("a", 0.0, 100.0),
-        ("b", 0.0, 100.0),
-        ("c", 0.0, 100.0),
+    _DEFAULT_BANDS: Final[tuple[tuple[BandName, float, float], ...]] = tuple(
+        (band, 0.0, 100.0) for band in BAND_ORDER
     )
 
     def __init__(self, conn: aiosqlite.Connection, logger: FilteringBoundLogger) -> None:
@@ -328,7 +326,8 @@ class DBRepo:
 
         # Single transaction, avoids nested tx in per-row upserts.
         async with self._tx():
-            for name, spec in (("a", settings.BAND_A), ("b", settings.BAND_B), ("c", settings.BAND_C)):
+            band_specs = (settings.BAND_A, settings.BAND_B, settings.BAND_C)
+            for name, spec in zip(BAND_ORDER, band_specs):
                 if not spec:
                     continue
 
