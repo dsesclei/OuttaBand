@@ -21,11 +21,12 @@ from telegram.ext import (
     filters,
 )
 
-from db_repo import DBRepo
 from band_logic import fmt_range, format_advisory_card
 from band_advisor import compute_amounts, ranges_for_price, split_for_bucket, split_for_sigma
+from db_repo import DBRepo
 from structlog.typing import FilteringBoundLogger
 from volatility import VolReading
+from shared_types import BandMap, BandRange
 
 
 def _auth_cmd(fn):
@@ -169,7 +170,7 @@ class TelegramSvc:
                 break
         return numbers
 
-    def _bands_lines(self, bands: Dict[str, Tuple[float, float]]) -> list[str]:
+    def _bands_lines(self, bands: BandMap) -> list[str]:
         if not bands:
             return ["(No bands configured)"]
         return [f"{escape(name.upper())}: {fmt_range(*rng)}" for name, rng in sorted(bands.items())]
@@ -192,7 +193,7 @@ class TelegramSvc:
     ) -> list[str]:
         if not (notional and notional > 0 and price and math.isfinite(price) and price > 0):
             return []
-        planned: Dict[str, Tuple[float, float]] = {}
+        planned: BandMap = {}
         with suppress(ValueError):
             planned = ranges_for_price(price, bucket, include_a_on_high=False)
         if not planned:
@@ -323,7 +324,7 @@ class TelegramSvc:
         price = float(advisory["price"])
         sigma_pct = cast(Optional[float], advisory.get("sigma_pct"))
         bucket = str(advisory["bucket"])
-        ranges = cast(Dict[str, Tuple[float, float]], cast(Any, advisory["ranges"]))
+        ranges = cast(BandMap, cast(Any, advisory["ranges"]))
 
         split: Optional[Tuple[int, int, int]] = None
         raw_split = advisory.get("split")
@@ -381,8 +382,8 @@ class TelegramSvc:
         band: str,
         price: float,
         src_label: Optional[str],
-        bands: dict[str, Tuple[float, float]],
-        suggested_range: Tuple[float, float],
+        bands: BandMap,
+        suggested_range: BandRange,
         policy_meta: Optional[Tuple[str, float]] = None,
     ) -> None:
         app = self._ensure_app()
@@ -678,7 +679,7 @@ class TelegramSvc:
         usdc_pct = self._format_pct(usdc_frac)
         await self._send(f"[<i>Applied</i>] Tilt → SOL/USDC = {escape(sol_pct)}/{escape(usdc_pct)}")
 
-    def _bands_menu_text(self, bands: Dict[str, Tuple[float, float]]) -> str:
+    def _bands_menu_text(self, bands: BandMap) -> str:
         if not bands:
             return "(No bands configured)"
         return "\n".join(
@@ -755,7 +756,7 @@ class TelegramSvc:
             return
 
         mid, payload = pending
-        pending_band, rng = cast(Tuple[str, Tuple[float, float]], payload)
+        pending_band, rng = cast(Tuple[str, BandRange], payload)
         if pending_band != band:
             await query.answer(self._STALE_ALERT, show_alert=True)
             return
@@ -804,7 +805,7 @@ class TelegramSvc:
             return
 
         mid, payload = pending
-        ranges = cast(Dict[str, Tuple[float, float]], payload)
+        ranges = cast(BandMap, payload)
 
         await query.answer()
 

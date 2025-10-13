@@ -10,6 +10,8 @@ import math
 
 from typing import Any, Dict, Optional, Set, Tuple
 
+from shared_types import BandMap
+
 
 _BUCKET_WIDTHS: Dict[str, Dict[str, float]] = {
     "low": {
@@ -77,7 +79,7 @@ def split_for_bucket(bucket: str) -> Tuple[int, int, int]:
 def compute_amounts(
     price: float,
     split: Tuple[int, int, int],
-    ranges: Dict[str, Tuple[float, float]],
+    ranges: BandMap,
     notional_usd: Optional[float],
     tilt_sol_frac: float,
     *,
@@ -140,7 +142,7 @@ def ranges_for_price(
     bucket: str,
     *,
     include_a_on_high: bool = False,
-) -> Dict[str, Tuple[float, float]]:
+) -> BandMap:
     """Build absolute ranges for ``price`` under the given ``bucket`` policy.
 
     The helper uses ``widths_for_bucket`` to determine the percent widths. When
@@ -151,7 +153,7 @@ def ranges_for_price(
     """
 
     widths, skip_a = widths_for_bucket(bucket)
-    ranges: Dict[str, Tuple[float, float]] = {}
+    ranges: BandMap = {}
     for band, width in widths.items():
         if skip_a and band == "a" and not include_a_on_high:
             continue

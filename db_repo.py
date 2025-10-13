@@ -2,19 +2,16 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Final, Literal, TYPE_CHECKING
+from typing import Final, TYPE_CHECKING
 
 import aiosqlite
 from structlog.typing import FilteringBoundLogger
 
+from shared_types import BandMap, BandRange, Side
+
 if TYPE_CHECKING:  # pragma: no cover - used only for type hints
     from main import Settings
 
-
-# Type aliases
-BandRange = tuple[float, float]
-BandMap = dict[str, BandRange]
-Side = Literal["low", "high"]
 
 # Constants
 BANDS_UPSERT_SQL: Final = (
@@ -323,7 +320,7 @@ class DBRepo:
     # ---------- ENV-driven bands ----------
 
     async def _upsert_bands_from_env(self, settings: "Settings") -> None:
-        defaults: dict[str, tuple[float, float]] = {
+        defaults: BandMap = {
             name: (float(low), float(high)) for name, low, high in self._DEFAULT_BANDS
         }
 

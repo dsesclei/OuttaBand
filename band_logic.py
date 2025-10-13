@@ -4,6 +4,7 @@ from html import escape
 from typing import Dict, Optional, Set, Tuple
 
 import band_advisor
+from shared_types import BandMap
 
 
 def fmt_price(x: float) -> str:
@@ -14,14 +15,14 @@ def fmt_range(lo: float, hi: float) -> str:
     return f"{fmt_price(lo)}–{fmt_price(hi)}"  # en dash
 
 
-def broken_bands(p: float, bands: Dict[str, Tuple[float, float]]) -> Set[str]:
+def broken_bands(p: float, bands: BandMap) -> Set[str]:
     return {name for name, (lo, hi) in bands.items() if p < lo or p > hi}
 
 def format_advisory_card(
     price: float,
     sigma_pct: Optional[float],
     bucket: str,
-    ranges: Dict[str, Tuple[float, float]],
+    ranges: BandMap,
     split: Tuple[int, int, int],
     *,
     stale: bool = False,
