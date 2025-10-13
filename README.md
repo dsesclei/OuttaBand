@@ -16,9 +16,19 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 Creating a virtual environment first (`python3.11 -m venv .venv && source .venv/bin/activate`) keeps dependencies isolated. The `.env` file will contain real Telegram tokens—it's already gitignored, but double-check before committing or screen sharing.
 
-### Docker / Compose
+### Docker
 
-Container quickstarts land in the upcoming Docker commits; this section is a placeholder until then.
+```bash
+docker build -t lpbot:local .
+mkdir -p data
+docker run --rm \
+  --env-file .env \
+  -v "$(pwd)/data:/data" \
+  -p 8000:8000 \
+  lpbot:local
+```
+
+The image runs as a non-root user and persists its SQLite database under `/data`. Mounting `$(pwd)/data` keeps `app.db` between runs. The built-in health check polls `http://127.0.0.1:8000/healthz`; wait for that to go green before trusting alerts.
 
 ## Configuration
 
