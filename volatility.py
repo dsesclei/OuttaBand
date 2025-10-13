@@ -177,6 +177,20 @@ async def clear_cache() -> None:
         _cache.clear()
 
 
+async def get_cache_age(base_url: str, symbol: str) -> Optional[float]:
+    """Return the age in seconds of the cached reading for the given market."""
+    key = (base_url, symbol)
+    async with _cache_lock:
+        cached = _cache.get(key)
+    if not cached:
+        return None
+    _reading, fetched_ts = cached
+    age = time.time() - fetched_ts
+    if age < 0:
+        age = 0.0
+    return age
+
+
 def _extract_closes(payload: Any) -> Tuple[list[float], list[int]]:
     closes: list[float] = []
     close_times: list[int] = []

@@ -52,6 +52,7 @@ class TelegramSvc:
             return
 
         self._repo = repo
+        self._ready.clear()
         if self._log is None:
             candidate = getattr(repo, "_log", None)
             if candidate is not None:
@@ -96,7 +97,7 @@ class TelegramSvc:
 
         self._app = None
         self._repo = None
-        self._ready = asyncio.Event()
+        self._ready.clear()
         self._pending.clear()
         self._log = None
 
@@ -1250,3 +1251,6 @@ class TelegramSvc:
         if self._repo is None:
             raise RuntimeError("Telegram service repository not set. Call start() first.")
         return self._repo
+
+    def is_ready(self) -> bool:
+        return self._ready.is_set()

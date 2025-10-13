@@ -714,8 +714,41 @@ async def sigma() -> Dict[str, Any]:
 
 
 @app.get("/healthz")
-async def healthz() -> Dict[str, bool]:
-    return {"ok": True}
+async def healthz() -> Dict[str, Any]:
+    db_ok = False
+    if db_conn is not None:
+        try:
+            async with db_conn.execute("SELECT 1") as cur:
+                await cur.fetchone()
+            db_ok = True
+        except Exception as exc:
+            log.warning("health_db_check_failed", err=str(exc))
+
+    http_client_ok = http_client is not None
+    telegram_ready = tg.is_ready() if tg is not None else False
+
+    scheduler_ok = False
+    if scheduler is not None:
+        try:
+            jobs = scheduler.get_jobs()
+            scheduler_ok = bool(jobs)
+        except Exception as exc:
+            log.warning("health_scheduler_inspect_failed", err=str(exc))
+
+    cache_age = await vol.get_cache_age(settings.BINANCE_BASE_URL, settings.BINANCE_SYMBOL)
+    health: Dict[str, Any] = {
+        "ok": bool(db_ok and http_client_ok and telegram_ready and scheduler_ok),
+        "db_ok": db_ok,
+        "http_client_ok": http_client_ok,
+        "telegram_ready": telegram_ready,
+        "scheduler_ok": scheduler_ok,
+        "last_run_ts_check": last_run_ts_check,
+        "last_run_ts_daily": last_run_ts_daily,
+        "next_run_ts_check": next_run_ts_check,
+        "next_run_ts_daily": next_run_ts_daily,
+        "volatility_cache_age_s": cache_age,
+    }
+    return health
 
 
 # ----------------------------
