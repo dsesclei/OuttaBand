@@ -297,10 +297,6 @@ async def process_breaches(
         if name not in broken:
             continue
 
-        if effective_bucket == "high" and name == "a":
-            # don't touch a in high vol unless explicitly asked
-            continue
-
         side = "below" if price < lo else "above"
 
         # Persisted rows pre-date slot quantization, so floor before comparing.
@@ -315,6 +311,8 @@ async def process_breaches(
                     band=name,
                     side=side,
                     seconds_remaining=seconds_remaining,
+                    now_aligned=now_aligned,
+                    last_aligned=last_aligned,
                 )
                 continue
 
@@ -339,7 +337,7 @@ async def process_breaches(
         await tg.send_breach_offer(
             band=name,
             price=price,
-            src_label=None,
+            src_label=src_label,
             bands=bands,
             suggested_range=rng,
             policy_meta=(effective_bucket, width) if width is not None else None,
