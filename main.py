@@ -120,6 +120,11 @@ scheduler: Optional[AsyncIOScheduler] = None
 # Logging
 # ----------------------------
 
+SERVICE_NAME = os.getenv("SERVICE_NAME", "lpbot")
+GIT_SHA = os.getenv("GIT_SHA")
+SERVICE_VERSION = os.getenv("SERVICE_VERSION") or GIT_SHA or "dev"
+
+
 def configure_logging() -> FilteringBoundLogger:
     level_name = os.getenv("LPBOT_LOG_LEVEL", "INFO").upper()
     level_map = {
@@ -188,7 +193,9 @@ def configure_logging() -> FilteringBoundLogger:
     return structlog.get_logger("lpbot")
 
 
-base_log = configure_logging()
+base_log = configure_logging().bind(service=SERVICE_NAME, version=SERVICE_VERSION)
+if GIT_SHA:
+    base_log = base_log.bind(git_sha=GIT_SHA)
 log = base_log.bind(module="main")
 
 
@@ -284,10 +291,11 @@ async def process_breaches(
     effective_bucket = bucket or "mid"
     warned = False
 
+    include_a_on_high = settings.INCLUDE_A_ON_HIGH
     suggested_map = band_advisor.ranges_for_price(
         price,
         effective_bucket,
-        include_a_on_high=False,
+        include_a_on_high=include_a_on_high,
     )
     widths, _ = band_advisor.widths_for_bucket(effective_bucket)
     for name, (lo, hi) in bands.items():
@@ -314,7 +322,13 @@ async def process_breaches(
                 continue
 
         if bucket is None and not warned:
-            log.warning("bucket_missing", band=name, side=side, fallback="mid")
+            log.warning(
+                "bucket_missing",
+                band=name,
+                side=side,
+                fallback="mid",
+                include_a_on_high=include_a_on_high,
+            )
             warned = True
 
         rng = suggested_map.get(name)
@@ -374,9 +388,6 @@ async def check_once() -> None:
     assert http_client is not None, "http client not initialized"
     assert repo is not None, "db repo not initialized"
     assert tg is not None, "telegram service not initialized"
-
-    started_ts = int(time.time())
-    last_run_ts_check = started_ts
 
     try:
         price = await decide_price(http_client)
@@ -715,6 +726,15 @@ async def healthz() -> Dict[str, Any]:
         "volatility_cache_age_s": cache_age,
     }
     return health
+
+
+@app.get("/version")
+async def version() -> Dict[str, Optional[str]]:
+    return {
+        "service": SERVICE_NAME,
+        "version": SERVICE_VERSION,
+        "git_sha": GIT_SHA,
+    }
 
 
 # ----------------------------
