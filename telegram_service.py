@@ -21,6 +21,7 @@ from db_repo import DBRepo
 from band_logic import fmt_range, format_advisory_card
 from band_advisor import compute_amounts, ranges_for_price, split_for_bucket, split_for_sigma
 from structlog.typing import FilteringBoundLogger
+from volatility import VolReading
 
 
 class TelegramSvc:
@@ -35,7 +36,7 @@ class TelegramSvc:
         self._pending: Dict[int, Tuple[str, object]] = {}
         self._log: Optional[FilteringBoundLogger] = logger
         self._price_provider: Optional[Callable[[], Awaitable[Optional[float]]]] = None
-        self._sigma_provider: Optional[Callable[[], Awaitable[Optional[Dict[str, Any]]]]] = None
+        self._sigma_provider: Optional[Callable[[], Awaitable[Optional[VolReading]]]] = None
 
     def _prune_pending(self) -> None:
         cap = max(1, self.MAX_PENDING)
@@ -271,7 +272,7 @@ class TelegramSvc:
     def set_price_provider(self, fn: Callable[[], Awaitable[Optional[float]]]) -> None:
         self._price_provider = fn
 
-    def set_sigma_provider(self, fn: Callable[[], Awaitable[Optional[Dict[str, Any]]]]) -> None:
+    def set_sigma_provider(self, fn: Callable[[], Awaitable[Optional[VolReading]]]) -> None:
         self._sigma_provider = fn
 
     async def _get_price(self) -> Optional[float]:
@@ -282,7 +283,7 @@ class TelegramSvc:
         except Exception:
             return None
 
-    async def _get_sigma(self) -> Optional[Dict[str, Any]]:
+    async def _get_sigma(self) -> Optional[VolReading]:
         if not self._sigma_provider:
             return None
         try:
@@ -356,23 +357,16 @@ class TelegramSvc:
         else:
             lines.append("<b>Price</b>: Unknown")
 
-        sigma_bucket = "mid"
+        sigma_bucket = sigma.bucket if sigma else "mid"
+        sigma_bucket_label = sigma_bucket.title()
+        sigma_pct_value: Optional[float] = None
         sigma_display = "–"
         sigma_stale = False
-        sigma_pct_value: Optional[float] = None
         if sigma:
-            bucket_raw = sigma.get("bucket")
-            if isinstance(bucket_raw, str) and bucket_raw:
-                sigma_bucket = bucket_raw
-            sigma_pct_val = sigma.get("sigma_pct")
-            try:
-                if sigma_pct_val is not None and math.isfinite(float(sigma_pct_val)):
-                    sigma_pct_value = float(sigma_pct_val)
-                    sigma_display = f"{sigma_pct_value:.2f}%"
-            except (TypeError, ValueError):
-                sigma_display = "–"
-            sigma_stale = bool(sigma.get("stale"))
-        sigma_bucket_label = sigma_bucket.title()
+            if math.isfinite(sigma.sigma_pct):
+                sigma_pct_value = float(sigma.sigma_pct)
+                sigma_display = f"{sigma_pct_value:.2f}%"
+            sigma_stale = sigma.stale
         sigma_line = f"<b>Volatility</b>: {sigma_display} ({escape(sigma_bucket_label)})"
         if sigma_stale:
             sigma_line = f"{sigma_line} [<i>Stale</i>]"

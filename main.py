@@ -346,11 +346,11 @@ async def process_breaches(
         log.info("no_breach", price=price, source=src_label)
 
 
-async def get_sigma_reading() -> Optional[Dict[str, Any]]:
+async def get_sigma_reading() -> Optional[vol.VolReading]:
     if http_client is None:
         return None
 
-    reading = await vol.fetch_sigma_1h(
+    return await vol.fetch_sigma_1h(
         http_client,
         base_url=settings.BINANCE_BASE_URL,
         symbol=settings.BINANCE_SYMBOL,
@@ -358,17 +358,6 @@ async def get_sigma_reading() -> Optional[Dict[str, Any]]:
         max_stale=settings.VOL_MAX_STALE_SECONDS,
         user_agent=settings.HTTP_UA_VOL,
     )
-    if reading is None:
-        return None
-
-    return {
-        "sigma_pct": reading.sigma_pct,
-        "bucket": reading.bucket,
-        "window_min": reading.window_minutes,
-        "as_of_ts": reading.as_of_ts,
-        "sample_count": reading.sample_count,
-        "stale": reading.stale,
-    }
 
 
 # ----------------------------
@@ -397,44 +386,19 @@ async def check_once() -> None:
             log.warning("advisory_price_invalid", price=price)
             return
         sigma = await get_sigma_reading()
-        val = sigma.get("sigma_pct") if sigma else None
-        sigma_pct_log: Optional[float]
-        if isinstance(val, (int, float)):
-            try:
-                val_float = float(val)
-            except (TypeError, ValueError):
-                sigma_pct_log = None
-            else:
-                sigma_pct_log = round(val_float, 3) if math.isfinite(val_float) else None
-        else:
-            sigma_pct_log = None
-
-        bucket = sigma.get("bucket") if sigma else None
-        stale = bool(sigma.get("stale")) if sigma else None
-
-        sample_count = None
-        if sigma and sigma.get("sample_count") is not None:
-            try:
-                sample_count = int(sigma.get("sample_count"))
-            except (TypeError, ValueError):
-                sample_count = None
-
-        as_of_ts = None
-        if sigma and sigma.get("as_of_ts") is not None:
-            try:
-                as_of_ts = int(sigma.get("as_of_ts"))
-            except (TypeError, ValueError):
-                as_of_ts = None
+        sigma_pct_log: Optional[float] = None
+        if sigma and math.isfinite(sigma.sigma_pct):
+            sigma_pct_log = round(float(sigma.sigma_pct), 3)
 
         log_kwargs = {
             "sigma_pct": sigma_pct_log,
-            "bucket": bucket,
-            "stale": stale,
-            "sample_count": sample_count,
-            "as_of_ts": as_of_ts,
+            "bucket": sigma.bucket if sigma else None,
+            "stale": sigma.stale if sigma else None,
+            "sample_count": sigma.sample_count if sigma else None,
+            "as_of_ts": sigma.as_of_ts if sigma else None,
         }
         log.info("sigma_ok" if sigma else "sigma_miss", **log_kwargs)
-        bucket = sigma["bucket"] if sigma else None
+        bucket = sigma.bucket if sigma else None
         current_slot_ts = floor_to_slot(int(time.time()))
         await process_breaches(
             price,
@@ -482,17 +446,11 @@ async def send_daily_advisory() -> None:
         sigma = await get_sigma_reading()
         if sigma is None:
             log.warning("sigma_miss_daily")
-        bucket = (sigma.get("bucket") if sigma else None) or "mid"
-        sigma_pct_raw = sigma.get("sigma_pct") if sigma else None
+        bucket = (sigma.bucket if sigma else None) or "mid"
 
-        sigma_pct: Optional[float]
-        if sigma_pct_raw is None:
-            sigma_pct = None
-        else:
-            try:
-                sigma_pct = float(sigma_pct_raw)
-            except (TypeError, ValueError):
-                sigma_pct = None
+        sigma_pct: Optional[float] = None
+        if sigma and math.isfinite(sigma.sigma_pct):
+            sigma_pct = float(sigma.sigma_pct)
 
         baseline = await repo.get_baseline()
         latest = await repo.get_latest_snapshot()
@@ -503,7 +461,8 @@ async def send_daily_advisory() -> None:
             bucket,
             include_a_on_high=settings.INCLUDE_A_ON_HIGH,
         )
-        advisory["stale"] = bool(sigma.get("stale")) if sigma else False
+        advisory_stale = sigma.stale if sigma else False
+        advisory["stale"] = advisory_stale
 
         drift_line: Optional[str] = None
         if baseline and latest:
@@ -527,7 +486,7 @@ async def send_daily_advisory() -> None:
             price=price,
             bucket=bucket,
             sigma_pct=sigma_pct,
-            stale=advisory["stale"],
+            stale=advisory_stale,
         )
     except Exception as exc:
         log.error("advisory_failed", err=str(exc))
