@@ -24,6 +24,7 @@ import httpx
 import structlog
 
 import net
+from shared_types import Bucket, UnixTs
 
 log = structlog.get_logger("volatility")
 
@@ -44,9 +45,9 @@ class VolReading:
     """Snapshot of realized volatility derived from Binance minute candles."""
 
     sigma_pct: float
-    bucket: str
+    bucket: Bucket
     window_minutes: int = 60
-    as_of_ts: int = 0
+    as_of_ts: UnixTs = 0
     sample_count: int = 0
     stale: bool = False
 
@@ -135,7 +136,7 @@ async def fetch_sigma_1h(
 # overwrite if we are still the latest producer.
 
 
-def _bucket(sig_pct: float) -> str:
+def _bucket(sig_pct: float) -> Bucket:
     if sig_pct < 0.6:
         return "low"
     if sig_pct <= 1.2:

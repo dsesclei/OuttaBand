@@ -7,7 +7,7 @@ import time
 from contextlib import suppress
 from functools import wraps
 from html import escape
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, cast
+from typing import Any, Awaitable, Callable, Optional, Tuple, cast
 
 from telegram import CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -26,7 +26,21 @@ from band_advisor import compute_amounts, ranges_for_price, split_for_bucket, sp
 from db_repo import DBRepo
 from structlog.typing import FilteringBoundLogger
 from volatility import VolReading
-from shared_types import BandMap, BandRange
+from shared_types import (
+    AdvisoryPayload,
+    AlertPayload,
+    AmountsMap,
+    BAND_ORDER,
+    BandMap,
+    BandName,
+    BandRange,
+    Baseline,
+    Bucket,
+    BucketSplit,
+    Snapshot,
+    PendingKind,
+    PendingPayload,
+)
 
 
 def _auth_cmd(fn):
@@ -64,8 +78,8 @@ class TelegramSvc:
     _STALE_ALERT = "[<i>Stale</i>] This alert is no longer active."
     _STALE_ADV = "[<i>Stale</i>] This advisory is no longer active."
     _STALE_GENERIC = "[<i>Stale</i>] No longer active."
-    _PENDING_ALERT = "alert"
-    _PENDING_ADV = "adv"
+    _PENDING_ALERT: PendingKind = "alert"
+    _PENDING_ADV: PendingKind = "adv"
 
     def __init__(self, token: str, chat_id: int, logger: Optional[FilteringBoundLogger] = None) -> None:
         self._token = token
@@ -73,7 +87,7 @@ class TelegramSvc:
         self._app: Optional[Application] = None
         self._repo: Optional[DBRepo] = None
         self._ready: asyncio.Event = asyncio.Event()
-        self._pending: Dict[int, Tuple[str, object]] = {}
+        self._pending: dict[int, tuple[PendingKind, PendingPayload]] = {}
         self._log: Optional[FilteringBoundLogger] = logger
         self._price_provider: Optional[Callable[[], Awaitable[Optional[float]]]] = None
         self._sigma_provider: Optional[Callable[[], Awaitable[Optional[VolReading]]]] = None
@@ -122,10 +136,10 @@ class TelegramSvc:
     async def _pop_pending(
         self,
         query: CallbackQuery,
-        expected_kind: str,
+        expected_kind: PendingKind,
         *,
         stale_text: Optional[str] = None,
-    ) -> Optional[Tuple[int, object]]:
+    ) -> Optional[Tuple[int, PendingPayload]]:
         message = query.message
         mid = message.message_id if message else None
         if mid is None:
@@ -175,8 +189,8 @@ class TelegramSvc:
             return ["(No bands configured)"]
         return [f"{escape(name.upper())}: {fmt_range(*rng)}" for name, rng in sorted(bands.items())]
 
-    def _sigma_summary(self, sigma: Optional[VolReading]) -> tuple[str, str, Optional[float]]:
-        bucket = sigma.bucket if sigma else "mid"
+    def _sigma_summary(self, sigma: Optional[VolReading]) -> tuple[str, Bucket, Optional[float]]:
+        bucket: Bucket = sigma.bucket if sigma else "mid"
         label = escape(bucket.title())
         pct = float(sigma.sigma_pct) if sigma and math.isfinite(sigma.sigma_pct) else None
         display = f"{pct:.2f}%" if pct is not None else "–"
@@ -186,10 +200,10 @@ class TelegramSvc:
     def _amounts_lines(
         self,
         price: Optional[float],
-        bucket: str,
+        bucket: Bucket,
         notional: Optional[float],
         tilt_sol_frac: float,
-        split: Tuple[int, int, int],
+        split: BucketSplit,
     ) -> list[str]:
         if not (notional and notional > 0 and price and math.isfinite(price) and price > 0):
             return []
@@ -208,7 +222,7 @@ class TelegramSvc:
         if not amounts_map:
             return []
         lines: list[str] = []
-        for band in ("a", "b", "c"):
+        for band in BAND_ORDER:
             if band in amounts_map:
                 sol_amt, usdc_amt = amounts_map[band]
                 lines.append(f"{band.upper()} amount: {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC")
@@ -218,8 +232,8 @@ class TelegramSvc:
 
     def _drift_summary(
         self,
-        baseline: Optional[Tuple[float, float, int]],
-        latest: Optional[Tuple[int, float, float, float, float]],
+        baseline: Optional[Baseline],
+        latest: Optional[Snapshot],
         price: Optional[float],
     ) -> Optional[str]:
         if price and math.isfinite(price) and price > 0 and baseline and latest:
@@ -314,7 +328,7 @@ class TelegramSvc:
         await self._send(text)
 
     async def send_advisory_card(
-        self, advisory: Dict[str, Any], drift_line: Optional[str] = None
+        self, advisory: AdvisoryPayload, drift_line: Optional[str] = None
     ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
@@ -322,11 +336,11 @@ class TelegramSvc:
         repo = self._ensure_repo()
 
         price = float(advisory["price"])
-        sigma_pct = cast(Optional[float], advisory.get("sigma_pct"))
-        bucket = str(advisory["bucket"])
-        ranges = cast(BandMap, cast(Any, advisory["ranges"]))
+        sigma_pct = advisory.get("sigma_pct")
+        bucket = advisory["bucket"]
+        ranges = advisory["ranges"]
 
-        split: Optional[Tuple[int, int, int]] = None
+        split: Optional[BucketSplit] = None
         raw_split = advisory.get("split")
         if isinstance(raw_split, (list, tuple)) and len(raw_split) == 3:
             with suppress(Exception):
@@ -374,17 +388,20 @@ class TelegramSvc:
             text=text,
             reply_markup=InlineKeyboardMarkup(buttons),
         )
-        self._pending[message.message_id] = (self._PENDING_ADV, dict(ranges))
+        self._pending[message.message_id] = (
+            self._PENDING_ADV,
+            cast(BandMap, dict(ranges)),
+        )
         self._prune_pending()
 
     async def send_breach_offer(
         self,
-        band: str,
+        band: BandName,
         price: float,
         src_label: Optional[str],
         bands: BandMap,
         suggested_range: BandRange,
-        policy_meta: Optional[Tuple[str, float]] = None,
+        policy_meta: Optional[Tuple[Bucket, float]] = None,
     ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
@@ -403,10 +420,10 @@ class TelegramSvc:
             f"<b>Current {band_label}</b>: {fmt_range(*current)}\n"
             f"<b>Suggested {band_label}</b>: {fmt_range(*suggested_range)}"
         )
-        bucket = None
+        bucket_meta: Optional[Bucket] = None
         if policy_meta is not None:
-            bucket, width = policy_meta
-            bucket_label = escape(bucket.title())
+            bucket_meta, width = policy_meta
+            bucket_label = escape(bucket_meta.title())
             text = (
                 f"{text}\n<i>Policy</i>: {bucket_label} (±{width * 100:.2f}%)"
             )
@@ -417,19 +434,18 @@ class TelegramSvc:
 
         amount_line: Optional[str] = None
         if (
-            bucket is not None
+            bucket_meta is not None
             and notional is not None
             and notional > 0
             and price > 0
             and math.isfinite(price)
         ):
             try:
-                split = split_for_bucket(bucket)
+                split = split_for_bucket(bucket_meta)
             except ValueError:
                 split = None
             if split:
-                bands_order = ("a", "b", "c")
-                pct = next((share for name, share in zip(bands_order, split) if name == band), None)
+                pct = next((share for name, share in zip(BAND_ORDER, split) if name == band), None)
                 if pct is not None and pct > 0:
                     per_band_usd = (notional * pct) / 100.0
                     tilt = min(max(tilt_sol_frac, 0.0), 1.0)
@@ -453,7 +469,7 @@ class TelegramSvc:
             text=text,
             reply_markup=InlineKeyboardMarkup(buttons),
         )
-        self._pending[message.message_id] = (self._PENDING_ALERT, (band, suggested_range))
+        self._pending[message.message_id] = (self._PENDING_ALERT, AlertPayload(band, suggested_range))
         self._prune_pending()
 
     def _ensure_app(self) -> Application:
@@ -750,13 +766,21 @@ class TelegramSvc:
             await query.answer()
             return
 
-        action, band = parts[1], parts[2]
+        action = parts[1]
+        band_raw = parts[2]
+        if band_raw not in BAND_ORDER:
+            await query.answer("[<i>Error</i>] Unknown band.", show_alert=True)
+            return
+        band = cast(BandName, band_raw)
         pending = await self._pop_pending(query, self._PENDING_ALERT, stale_text=self._STALE_ALERT)
         if not pending:
             return
 
         mid, payload = pending
-        pending_band, rng = cast(Tuple[str, BandRange], payload)
+        if not isinstance(payload, AlertPayload):
+            await query.answer(self._STALE_ALERT, show_alert=True)
+            return
+        pending_band, rng = payload
         if pending_band != band:
             await query.answer(self._STALE_ALERT, show_alert=True)
             return
@@ -805,6 +829,9 @@ class TelegramSvc:
             return
 
         mid, payload = pending
+        if not isinstance(payload, dict):
+            await query.answer(self._STALE_ADV, show_alert=True)
+            return
         ranges = cast(BandMap, payload)
 
         await query.answer()

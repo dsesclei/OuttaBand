@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import math
 import re
+from contextlib import asynccontextmanager
 from typing import Final, TYPE_CHECKING
 
 import aiosqlite
 from structlog.typing import FilteringBoundLogger
 
-from shared_types import BandMap, BandRange, Side
+from shared_types import BandMap, BandRange, Baseline, Side, Snapshot, BandName
 
 if TYPE_CHECKING:  # pragma: no cover - used only for type hints
     from main import Settings
@@ -63,7 +64,7 @@ class DBRepo:
     );
     """
 
-    _DEFAULT_BANDS: Final[tuple[tuple[str, float, float], ...]] = (
+    _DEFAULT_BANDS: Final[tuple[tuple[BandName, float, float], ...]] = (
         ("a", 0.0, 100.0),
         ("b", 0.0, 100.0),
         ("c", 0.0, 100.0),
@@ -79,6 +80,7 @@ class DBRepo:
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA synchronous=NORMAL")
+        await self._conn.execute("PRAGMA busy_timeout=3000")
 
         await self._conn.executescript(self.CREATE_TABLES_SQL)
         await self._conn.commit()
@@ -87,8 +89,6 @@ class DBRepo:
         await self._upsert_bands_from_env(settings)
 
     # ---------- Small helpers ----------
-
-    from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def _tx(self, *, immediate: bool = False):
@@ -101,7 +101,7 @@ class DBRepo:
         else:
             await self._conn.commit()
 
-    async def _scalar(self, sql: str, params: tuple = ()) -> object | None:
+    async def _scalar(self, sql: str, params: tuple[object, ...] = ()) -> object | None:
         async with self._conn.execute(sql, params) as cur:
             row = await cur.fetchone()
             return row[0] if row else None
@@ -165,12 +165,14 @@ class DBRepo:
 
     # ---------- Baseline ----------
 
-    async def get_baseline(self) -> tuple[float, float, int] | None:
-        async with self._conn.execute("SELECT sol, usdc, ts FROM baseline WHERE id=1") as cur:
+    async def get_baseline(self) -> Baseline | None:
+        async with self._conn.execute(
+            "SELECT sol, usdc, ts FROM baseline WHERE id=1 LIMIT 1"
+        ) as cur:
             row = await cur.fetchone()
             if not row:
                 return None
-            return (row["sol"], row["usdc"], row["ts"])
+            return Baseline(row["sol"], row["usdc"], row["ts"])
 
     async def set_baseline(self, sol: float, usdc: float, ts: int) -> None:
         async with self._tx():
@@ -236,14 +238,14 @@ class DBRepo:
                 (ts, sol, usdc, price, drift),
             )
 
-    async def get_latest_snapshot(self) -> tuple[int, float, float, float, float] | None:
+    async def get_latest_snapshot(self) -> Snapshot | None:
         async with self._conn.execute(
             "SELECT ts, sol, usdc, price, drift FROM snapshots ORDER BY ts DESC LIMIT 1"
         ) as cur:
             row = await cur.fetchone()
             if not row:
                 return None
-            return (row["ts"], row["sol"], row["usdc"], row["price"], row["drift"])
+            return Snapshot(row["ts"], row["sol"], row["usdc"], row["price"], row["drift"])
 
     # ---------- Schema / Migration ----------
 
@@ -324,43 +326,47 @@ class DBRepo:
             name: (float(low), float(high)) for name, low, high in self._DEFAULT_BANDS
         }
 
-        for name, spec in (("a", settings.BAND_A), ("b", settings.BAND_B), ("c", settings.BAND_C)):
-            if not spec:
-                continue
-            parsed = self._parse_band_spec(spec)
-            if parsed is None:
-                self._log.warning("band_env_invalid", band=name, spec=spec)
-                continue
+        # Single transaction, avoids nested tx in per-row upserts.
+        async with self._tx():
+            for name, spec in (("a", settings.BAND_A), ("b", settings.BAND_B), ("c", settings.BAND_C)):
+                if not spec:
+                    continue
 
-            lo, hi = parsed
-            async with self._conn.execute(
-                "SELECT low, high FROM bands WHERE name=?",
-                (name,),
-            ) as cur:
-                row = await cur.fetchone()
-            current = (row["low"], row["high"]) if row else None
+                parsed = self._parse_band_spec(spec)
+                if parsed is None:
+                    self._log.warning("band_env_invalid", band=name, spec=spec)
+                    continue
 
-            if current is None:
-                await self.upsert_band(name, lo, hi)
-                self._log.info("band_env_seeded", band=name, low=lo, high=hi, reason="missing")
-                continue
+                lo, hi = parsed
+                async with self._conn.execute(
+                    "SELECT low, high FROM bands WHERE name=? LIMIT 1",
+                    (name,),
+                ) as cur:
+                    row = await cur.fetchone()
 
-            if self._ranges_close(current, (lo, hi)):
-                self._log.debug("band_env_already_set", band=name, low=lo, high=hi)
-                continue
+                current = (row["low"], row["high"]) if row else None
 
-            default_range = defaults.get(name)
-            if default_range and self._ranges_close(current, default_range):
-                await self.upsert_band(name, lo, hi)
-                self._log.info("band_env_seeded", band=name, low=lo, high=hi, reason="default")
-                continue
+                if current is None:
+                    await self._conn.execute(BANDS_UPSERT_SQL, (name, lo, hi))
+                    self._log.info("band_env_seeded", band=name, low=lo, high=hi, reason="missing")
+                    continue
 
-            self._log.info(
-                "band_env_skipped_existing",
-                band=name,
-                existing_low=current[0],
-                existing_high=current[1],
-            )
+                if self._ranges_close(current, (lo, hi)):
+                    self._log.debug("band_env_already_set", band=name, low=lo, high=hi)
+                    continue
+
+                default_range = defaults.get(name)
+                if default_range and self._ranges_close(current, default_range):
+                    await self._conn.execute(BANDS_UPSERT_SQL, (name, lo, hi))
+                    self._log.info("band_env_seeded", band=name, low=lo, high=hi, reason="default")
+                    continue
+
+                self._log.info(
+                    "band_env_skipped_existing",
+                    band=name,
+                    existing_low=current[0],
+                    existing_high=current[1],
+                )
 
     # ---------- Utilities ----------
 

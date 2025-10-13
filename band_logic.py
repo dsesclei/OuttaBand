@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from html import escape
-from typing import Dict, Optional, Set, Tuple
+from typing import Optional, Set
 
 import band_advisor
-from shared_types import BandMap
+from shared_types import (
+    BAND_ORDER,
+    AmountsMap,
+    BandMap,
+    BandName,
+    Bucket,
+    BucketSplit,
+)
 
 
 def fmt_price(x: float) -> str:
@@ -15,18 +22,18 @@ def fmt_range(lo: float, hi: float) -> str:
     return f"{fmt_price(lo)}–{fmt_price(hi)}"  # en dash
 
 
-def broken_bands(p: float, bands: BandMap) -> Set[str]:
+def broken_bands(p: float, bands: BandMap) -> Set[BandName]:
     return {name for name, (lo, hi) in bands.items() if p < lo or p > hi}
 
 def format_advisory_card(
     price: float,
     sigma_pct: Optional[float],
-    bucket: str,
+    bucket: Bucket,
     ranges: BandMap,
-    split: Tuple[int, int, int],
+    split: BucketSplit,
     *,
     stale: bool = False,
-    amounts: Optional[Dict[str, Tuple[float, float]]] = None,
+    amounts: Optional[AmountsMap] = None,
     unallocated_usd: Optional[float] = None,
 ) -> str:
     sigma_display = "–"
@@ -44,7 +51,7 @@ def format_advisory_card(
 
     widths, _ = band_advisor.widths_for_bucket(bucket)
     lines = [header]
-    for name in ("a", "b", "c"):
+    for name in BAND_ORDER:
         if name not in ranges:
             continue
         lo, hi = ranges[name]

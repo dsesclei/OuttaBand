@@ -30,6 +30,7 @@ import band_advisor
 import volatility as vol
 from telegram_service import TelegramSvc
 import net
+from shared_types import AdvisoryPayload, BandMap, BandName, Bucket
 
 
 # ----------------------------
@@ -274,7 +275,7 @@ async def decide_price(client: httpx.AsyncClient) -> Optional[float]:
 async def process_breaches(
     price: float,
     src_label: str,
-    bucket: Optional[str] = None,
+    bucket: Optional[Bucket] = None,
     *,
     now_slot_ts: Optional[int] = None,
 ) -> None:
@@ -283,12 +284,12 @@ async def process_breaches(
 
     base_ts = int(time.time()) if now_slot_ts is None else int(now_slot_ts)
     now_aligned = floor_to_slot(base_ts)
-    bands = await repo.get_bands()
-    broken = broken_bands(price, bands)
+    bands: BandMap = await repo.get_bands()
+    broken: set[BandName] = broken_bands(price, bands)
     cooldown_secs = settings.COOLDOWN_MINUTES * 60
     sent = 0
 
-    effective_bucket = bucket or "mid"
+    effective_bucket: Bucket = bucket or "mid"
     warned = False
 
     include_a_on_high = settings.INCLUDE_A_ON_HIGH
@@ -457,7 +458,7 @@ async def send_daily_advisory() -> None:
         sigma = await get_sigma_reading()
         if sigma is None:
             log.warning("sigma_miss_daily")
-        bucket = (sigma.bucket if sigma else None) or "mid"
+        bucket: Bucket = (sigma.bucket if sigma else None) or "mid"
 
         sigma_pct: Optional[float] = None
         if sigma and math.isfinite(sigma.sigma_pct):
@@ -466,7 +467,7 @@ async def send_daily_advisory() -> None:
         baseline = await repo.get_baseline()
         latest = await repo.get_latest_snapshot()
 
-        advisory = band_advisor.build_advisory(
+        advisory: AdvisoryPayload = band_advisor.build_advisory(
             price,
             sigma_pct,
             bucket,

@@ -8,12 +8,21 @@ from __future__ import annotations
 
 import math
 
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple, cast
 
-from shared_types import BandMap
+from shared_types import (
+    BAND_ORDER,
+    AdvisoryPayload,
+    AmountsMap,
+    BandMap,
+    BandName,
+    Bucket,
+    BucketSplit,
+    PolicyWidthMap,
+)
 
 
-_BUCKET_WIDTHS: Dict[str, Dict[str, float]] = {
+_BUCKET_WIDTHS: dict[Bucket, PolicyWidthMap] = {
     "low": {
         "a": 0.0035,
         "b": 0.011,
@@ -32,7 +41,7 @@ _BUCKET_WIDTHS: Dict[str, Dict[str, float]] = {
 }
 
 
-def widths_for_bucket(bucket: str) -> Tuple[Dict[str, float], bool]:
+def widths_for_bucket(bucket: Bucket) -> Tuple[PolicyWidthMap, bool]:
     """Return percent widths for the requested sigma bucket.
 
     The table encodes the policy mapping σ bucket → percent ranges. Buckets are
@@ -51,7 +60,7 @@ def widths_for_bucket(bucket: str) -> Tuple[Dict[str, float], bool]:
     return widths, skip_a
 
 
-def split_for_sigma(sigma_pct: float | None) -> Tuple[int, int, int]:
+def split_for_sigma(sigma_pct: float | None) -> BucketSplit:
     """Return the advisory split for the supplied sigma percentage.
 
     ``sigma_pct`` is expected as a percentage (e.g. ``0.6`` for 0.6%). ``None``
@@ -66,7 +75,7 @@ def split_for_sigma(sigma_pct: float | None) -> Tuple[int, int, int]:
     return (50, 30, 20)
 
 
-def split_for_bucket(bucket: str) -> Tuple[int, int, int]:
+def split_for_bucket(bucket: Bucket) -> BucketSplit:
     """Return the advisory split for a bucket identifier."""
 
     if bucket == "low":
@@ -78,16 +87,16 @@ def split_for_bucket(bucket: str) -> Tuple[int, int, int]:
 
 def compute_amounts(
     price: float,
-    split: Tuple[int, int, int],
+    split: BucketSplit,
     ranges: BandMap,
     notional_usd: Optional[float],
     tilt_sol_frac: float,
     *,
-    present_bands: Optional[Set[str]] = None,
+    present_bands: Optional[Set[BandName]] = None,
     redistribute_skipped: bool = False,
     sol_decimals: int = 6,
     usdc_decimals: int = 2,
-) -> Tuple[Dict[str, Tuple[float, float]], float]:
+) -> Tuple[AmountsMap, float]:
     """Compute per-band token amounts using a simple tilt heuristic.
 
     The routine is advisory only: it applies a naive inside-band tilt to the
@@ -104,17 +113,16 @@ def compute_amounts(
         or not math.isfinite(price)
         or not math.isfinite(tilt_sol_frac)
     ):
-        return {}, 0.0
+        return cast(AmountsMap, {}), 0.0
 
     tilt = min(max(tilt_sol_frac, 0.0), 1.0)
-    band_order = ("a", "b", "c")
-    split_map = {band: pct for band, pct in zip(band_order, split)}
+    split_map: Dict[BandName, int] = {band: pct for band, pct in zip(BAND_ORDER, split)}
 
-    present = set(ranges.keys()) if present_bands is None else set(present_bands)
-    present &= set(band_order)
+    present: set[BandName] = set(ranges.keys()) if present_bands is None else set(present_bands)
+    present &= set(BAND_ORDER)
 
     if not present:
-        return {}, 0.0
+        return cast(AmountsMap, {}), 0.0
 
     total_present_pct = sum(split_map.get(band, 0) for band in present)
     total_pct = sum(split_map.values())
@@ -125,7 +133,7 @@ def compute_amounts(
     else:
         scale = 1.0
 
-    amounts: Dict[str, Tuple[float, float]] = {}
+    amounts: AmountsMap = {}
     for band in present:
         pct = split_map.get(band, 0) * scale
         per_band_usd = (notional_usd * pct) / 100.0
@@ -139,7 +147,7 @@ def compute_amounts(
 
 def ranges_for_price(
     price: float,
-    bucket: str,
+    bucket: Bucket,
     *,
     include_a_on_high: bool = False,
 ) -> BandMap:
@@ -165,10 +173,10 @@ def ranges_for_price(
 def build_advisory(
     price: float,
     sigma_pct: Optional[float],
-    bucket: str,
+    bucket: Bucket,
     *,
     include_a_on_high: bool = False,
-) -> Dict[str, Any]:
+) -> AdvisoryPayload:
     """Construct a structured advisory payload for the supplied state.
 
     The payload keeps all inputs plus the derived policy pieces so downstream
