@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  lpbot:
+    build: .
+    image: lpbot:local
+    env_file:
+      - .env
+    environment:
+      DB_PATH: /data/app.db
+      LPBOT_LOG_LEVEL: ${LPBOT_LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import http.client; conn = http.client.HTTPConnection('127.0.0.1', 8000, timeout=5); conn.request('GET', '/healthz'); resp = conn.getresponse(); exit(0 if resp.status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

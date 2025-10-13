@@ -30,6 +30,14 @@ docker run --rm \
 
 The image runs as a non-root user and persists its SQLite database under `/data`. Mounting `$(pwd)/data` keeps `app.db` between runs. The built-in health check polls `http://127.0.0.1:8000/healthz`; wait for that to go green before trusting alerts.
 
+### Docker Compose
+
+```bash
+docker compose up --build
+```
+
+Compose uses the same Dockerfile and automatically loads `.env` via `env_file`. A `./data` volume is mounted into `/data`, so `data/app.db` survives restarts. Stream logs with `docker compose logs -f lpbot` and verify `/healthz` returns `ok=true` before relying on Telegram alerts.
+
 ## Configuration
 
 All settings are provided via environment variables (pydantic-settings, case-insensitive):
