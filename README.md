@@ -2,6 +2,24 @@
 
 An async FastAPI service that tracks the Meteora SOL/USDC DLMM price, computes realized volatility, and coordinates Telegram alerts when configured bands are breached. It keeps state in SQLite, quantizes alert cooldowns to scheduling slots, and exposes lightweight operational endpoints.
 
+## Quickstart
+
+### Local
+
+Python 3.11 is the target runtime. A minimal run looks like:
+
+```bash
+python3.11 -m pip install -r requirements.txt
+cp .env.example .env
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Creating a virtual environment first (`python3.11 -m venv .venv && source .venv/bin/activate`) keeps dependencies isolated. The `.env` file will contain real Telegram tokens—it's already gitignored, but double-check before committing or screen sharing.
+
+### Docker / Compose
+
+Container quickstarts land in the upcoming Docker commits; this section is a placeholder until then.
+
 ## Configuration
 
 All settings are provided via environment variables (pydantic-settings, case-insensitive):
@@ -25,6 +43,8 @@ All settings are provided via environment variables (pydantic-settings, case-ins
 
 Optional band seed variables `BAND_A`, `BAND_B`, `BAND_C` accept `"low-high"` strings and seed the database at boot.
 
+The range notation in this README uses an en dash (–); rendering assumes UTF-8.
+
 ## Volatility buckets & staleness
 
 `volatility.fetch_sigma_1h` computes σ from 60 Binance 1m closes:
@@ -32,6 +52,8 @@ Optional band seed variables `BAND_A`, `BAND_B`, `BAND_C` accept `"low-high"` st
 - `< 0.6%` → `low`
 - `0.6% – 1.2%` (inclusive) → `mid`
 - `> 1.2%` → `high`
+
+Buckets map to band widths of roughly ±0.35%/±1.1%/±1.8% (`low`), ±0.6%/±1.8%/±3.0% (`mid`), and ±0.9%/±2.5%/±4.0% (`high`). Advisory splits stay 60/20/20 in `low` volatility and tighten to 50/30/20 for `mid` and `high`. When the bucket is `high`, band `a` is suppressed unless `INCLUDE_A_ON_HIGH=true`, so alerts and advisories line up with the more defensive policy.
 
 Readings are cached by `(base_url, symbol)` for `VOL_CACHE_TTL_SECONDS`. When live fetches fail, cached data younger than `VOL_MAX_STALE_SECONDS` is returned with `stale=True`; older entries result in `None`, causing Sigma-dependent decisions to fall back to defaults.
 
@@ -43,15 +65,17 @@ Readings are cached by `(base_url, symbol)` for `VOL_CACHE_TTL_SECONDS`. When li
 - **Health check**: `GET /healthz` returns a JSON struct detailing `ok`, `db_ok`, `http_client_ok`, `telegram_ready`, `scheduler_ok`, scheduler run timestamps, and `volatility_cache_age_s`. Database health is probed via a lightweight `SELECT 1`.
 - **Metrics**: A `/metrics` endpoint is planned; until then rely on structured logs (sigma, advisory, and Telegram send events) plus `/healthz` for readiness.
 
-## Running locally
+## Telegram bot commands
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env  # provide required tokens/settings
-uvicorn main:app --host 0.0.0.0 --port 8000
-```
+The Telegram bot only responds to the configured chat and exposes:
+
+- `/status` — latest price, σ, bucket, and policy split.
+- `/bands` — view or edit stored band ranges.
+- `/setbaseline <sol> sol <usdc> usdc` — record baseline balances for tilt calculations.
+- `/setnotional <usd>` — set the notional USD budget for allocations.
+- `/settilt <sol>:<usdc>` — adjust the in-band SOL/USDC mix (e.g., `60:40`).
+- `/updatebalances <sol> sol <usdc> usdc` — refresh balances without replacing the baseline.
+- `/help` — show the command list plus policy caveats.
 
 ## Testing
 
