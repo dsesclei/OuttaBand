@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     BAND_B: Optional[str] = None
     BAND_C: Optional[str] = None
 
-    BINANCE_BASE_URL: str = "https://api.binance.com"
+    BINANCE_BASE_URL: str = "https://api.binance.us"
     BINANCE_SYMBOL: str = "SOLUSDT"
     VOL_CACHE_TTL_SECONDS: int = 60
     VOL_MAX_STALE_SECONDS: int = 7200
