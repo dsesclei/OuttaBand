@@ -9,7 +9,6 @@ import logging
 import logging.config
 import math
 import os
-import random
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
@@ -30,6 +29,7 @@ from band_logic import broken_bands
 import band_advisor
 import volatility as vol
 from telegram_service import telegramsvc
+import net
 
 
 # ----------------------------
@@ -207,37 +207,28 @@ async def fetch_json_with_retries(
     params: Optional[Dict[str, Any]] = None,
     attempts: int = 3,
     base_backoff: float = 0.5,
-) -> Optional[Dict[str, Any]]:
-    for i in range(attempts):
-        try:
-            r = await client.request(
-                method,
-                url,
-                headers={"user-agent": UA, **(headers or {})},
-                params=params,
-                timeout=DEFAULT_TIMEOUT,
-            )
-            # treat 429/5xx as retryable; others raise
-            if r.status_code == 429 or r.status_code >= 500:
-                raise httpx.HTTPStatusError("retryable", request=r.request, response=r)
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            # honor Retry-After if present on 429/5xx; else exponential backoff with jitter
-            retry_after = None
-            if isinstance(e, httpx.HTTPStatusError) and e.response is not None:
-                ra = e.response.headers.get("retry-after")
-                if ra:
-                    try:
-                        retry_after = float(ra)
-                    except Exception:
-                        retry_after = None
-            wait = (retry_after if retry_after is not None else base_backoff * (2 ** i)) + random.uniform(0, 0.2)
-            if i == attempts - 1:
-                log.error("http_failed", url=url, err=str(e))
-                return None
-            await asyncio.sleep(wait)
-    return None
+) -> Optional[Any]:
+    merged_headers = {"user-agent": UA, **(headers or {})}
+    try:
+        response = await net.request_with_retries(
+            client,
+            method,
+            url,
+            headers=merged_headers,
+            params=params,
+            attempts=attempts,
+            base_backoff=base_backoff,
+            timeout=DEFAULT_TIMEOUT,
+        )
+    except httpx.HTTPError as exc:
+        log.error("http_failed", url=url, err=str(exc))
+        return None
+
+    try:
+        return response.json()
+    except ValueError:
+        log.warning("json_parse_failed", url=url)
+        return response.content
 
 
 # ----------------------------

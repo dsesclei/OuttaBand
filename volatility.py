@@ -15,16 +15,15 @@ from __future__ import annotations
 
 import asyncio
 import math
-import random
 import statistics
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 import httpx
 import structlog
+
+import net
 
 log = structlog.get_logger("volatility")
 
@@ -36,7 +35,6 @@ DEFAULT_MAX_STALE = 7200
 
 MAX_FETCH_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 0.5
-BACKOFF_JITTER_SECONDS = 0.25
 REQUEST_USER_AGENT = "lpbot-volatility/0.1 (+https://github.com/dave/lpbot)"
 REQUEST_TIMEOUT = httpx.Timeout(7.5, connect=5.0, read=7.5, write=7.5, pool=5.0)
 REQUEST_HEADERS = {"user-agent": REQUEST_USER_AGENT}
@@ -221,69 +219,31 @@ async def _fetch_klines_with_retries(
     url = f"{base_url}/api/v3/klines"
     params = {"symbol": symbol, "interval": "1m", "limit": limit}
 
-    for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
-        response: Optional[httpx.Response] = None
-        try:
-            response = await client.get(
-                url,
-                params=params,
-                headers=REQUEST_HEADERS,
-                timeout=REQUEST_TIMEOUT,
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as exc:
-            response = exc.response
-        except httpx.HTTPError as exc:
-            response = getattr(exc, "response", None)
-        except ValueError:
-            pass
-
-        if attempt == MAX_FETCH_ATTEMPTS:
-            break
-
-        delay = _compute_retry_delay(attempt, response)
-        await asyncio.sleep(delay)
-
-    return None
-
-
-def _compute_retry_delay(attempt: int, response: Optional[httpx.Response]) -> float:
-    retry_after = _retry_after_seconds(response)
-    if retry_after is not None:
-        return retry_after
-
-    base = BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
-    jitter = random.uniform(0, BACKOFF_JITTER_SECONDS)
-    return base + jitter
-
-
-def _retry_after_seconds(response: Optional[httpx.Response]) -> Optional[float]:
-    if response is None:
-        return None
-
-    header = response.headers.get("Retry-After")
-    if not header:
+    try:
+        response = await net.request_with_retries(
+            client,
+            "GET",
+            url,
+            headers=REQUEST_HEADERS,
+            params=params,
+            attempts=MAX_FETCH_ATTEMPTS,
+            base_backoff=BACKOFF_BASE_SECONDS,
+            timeout=REQUEST_TIMEOUT,
+        )
+    except httpx.HTTPError as exc:
+        log.warning(
+            "klines_fetch_failed",
+            url=url,
+            attempts=MAX_FETCH_ATTEMPTS,
+            err=str(exc),
+        )
         return None
 
     try:
-        return max(0.0, float(header))
+        return response.json()
     except ValueError:
-        pass
-
-    try:
-        parsed = parsedate_to_datetime(header)
-    except (TypeError, ValueError):
+        log.debug("klines_json_invalid")
         return None
-
-    if parsed is None:
-        return None
-
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-
-    now = datetime.now(timezone.utc)
-    return max(0.0, (parsed - now).total_seconds())
 
 
 def _is_fresh(
