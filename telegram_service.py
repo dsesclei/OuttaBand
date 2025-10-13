@@ -4,15 +4,19 @@ import asyncio
 import math
 import os
 import time
+from contextlib import suppress
+from functools import wraps
 from html import escape
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple, cast
 
-from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    Defaults,
     MessageHandler,
     filters,
 )
@@ -24,8 +28,43 @@ from structlog.typing import FilteringBoundLogger
 from volatility import VolReading
 
 
+def _auth_cmd(fn):
+    @wraps(fn)
+    async def wrapper(self, update, context, *args, **kwargs):
+        if not self._is_authorized(update):
+            await self._reply_unauthorized(update, context)
+            return None
+        return await fn(self, update, context, *args, **kwargs)
+
+    return wrapper
+
+
+def _auth_cb(fn):
+    @wraps(fn)
+    async def wrapper(self, update, context, *args, **kwargs):
+        query = update.callback_query
+        if query is None:
+            return None
+        if not self._is_authorized(update):
+            await self._alert_unauthorized(query)
+            return None
+        return await fn(self, update, context, *args, **kwargs)
+
+    return wrapper
+
+
 class TelegramSvc:
     MAX_PENDING = int(os.getenv("LPBOT_PENDING_CAP", "100"))
+    _UNAUTHORIZED_HTML = "[<i>Unauthorized</i>]"
+    _USAGE_SETBASELINE = "[<i>Usage</i>] <code>/setbaseline &lt;sol&gt; sol &lt;usdc&gt; usdc</code> (e.g. <code>/setbaseline 1.0 sol 200 usdc</code>)"
+    _USAGE_UPDATEBAL = "[<i>Usage</i>] <code>/updatebalances &lt;sol&gt; sol &lt;usdc&gt; usdc</code> (e.g. <code>/updatebalances 1.0 sol 200 usdc</code>)"
+    _USAGE_SETNOTIONAL = "[<i>Usage</i>] <code>/setnotional &lt;usd&gt;</code> (e.g. <code>/setnotional 2500</code>)"
+    _USAGE_SETTILT = "[<i>Usage</i>] <code>/settilt &lt;sol&gt;:&lt;usdc&gt;</code> (e.g. <code>/settilt 60:40</code> or <code>/settilt 0.6</code>)"
+    _STALE_ALERT = "[<i>Stale</i>] This alert is no longer active."
+    _STALE_ADV = "[<i>Stale</i>] This advisory is no longer active."
+    _STALE_GENERIC = "[<i>Stale</i>] No longer active."
+    _PENDING_ALERT = "alert"
+    _PENDING_ADV = "adv"
 
     def __init__(self, token: str, chat_id: int, logger: Optional[FilteringBoundLogger] = None) -> None:
         self._token = token
@@ -48,6 +87,157 @@ class TelegramSvc:
                 break
             del self._pending[mid]
 
+    async def _send(self, text: str, reply_markup: Optional[Any] = None) -> None:
+        app = self._ensure_app()
+        await self._ready.wait()
+        await app.bot.send_message(
+            chat_id=self._chat_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+
+    async def _edit_or_send(
+        self,
+        query: CallbackQuery,
+        text: str,
+        reply_markup: Optional[Any] = None,
+    ) -> None:
+        try:
+            await query.edit_message_text(text, reply_markup=reply_markup)
+        except Exception:
+            await self._send(text, reply_markup=reply_markup)
+
+    async def _edit_by_id(self, message_id: int, text: str) -> bool:
+        try:
+            await self._ensure_app().bot.edit_message_text(
+                chat_id=self._chat_id,
+                message_id=message_id,
+                text=text,
+            )
+            return True
+        except Exception:
+            return False
+
+    async def _pop_pending(
+        self,
+        query: CallbackQuery,
+        expected_kind: str,
+        *,
+        stale_text: Optional[str] = None,
+    ) -> Optional[Tuple[int, object]]:
+        message = query.message
+        mid = message.message_id if message else None
+        if mid is None:
+            await query.answer(stale_text or self._STALE_GENERIC, show_alert=True)
+            return None
+        entry = self._pending.get(mid)
+        if not entry or entry[0] != expected_kind:
+            await query.answer(stale_text or self._STALE_GENERIC, show_alert=True)
+            return None
+        return mid, entry[1]
+
+    def _clamp01(self, value: float) -> float:
+        try:
+            v = float(value)
+        except Exception:
+            return 0.0
+        return min(1.0, max(0.0, v))
+
+    def _extract_numbers(
+        self,
+        text: str,
+        count: int,
+        *,
+        ignore_labels: Optional[set[str]] = None,
+    ) -> list[float]:
+        labels = {label.lower() for label in (ignore_labels or set())}
+        tokens = text.replace(":", " ").replace("/", " ").replace(",", " ").split()
+        numbers: list[float] = []
+        for token in tokens:
+            if token.startswith("/"):
+                continue
+            if token.strip().lower() in labels:
+                continue
+            try:
+                value = float(token)
+            except ValueError:
+                continue
+            if not math.isfinite(value):
+                continue
+            numbers.append(value)
+            if len(numbers) == count:
+                break
+        return numbers
+
+    def _bands_lines(self, bands: Dict[str, Tuple[float, float]]) -> list[str]:
+        if not bands:
+            return ["(No bands configured)"]
+        return [f"{escape(name.upper())}: {fmt_range(*rng)}" for name, rng in sorted(bands.items())]
+
+    def _sigma_summary(self, sigma: Optional[VolReading]) -> tuple[str, str, Optional[float]]:
+        bucket = sigma.bucket if sigma else "mid"
+        label = escape(bucket.title())
+        pct = float(sigma.sigma_pct) if sigma and math.isfinite(sigma.sigma_pct) else None
+        display = f"{pct:.2f}%" if pct is not None else "–"
+        stale = " [<i>Stale</i>]" if sigma and sigma.stale else ""
+        return f"<b>Volatility</b>: {display} ({label}){stale}", bucket, pct
+
+    def _amounts_lines(
+        self,
+        price: Optional[float],
+        bucket: str,
+        notional: Optional[float],
+        tilt_sol_frac: float,
+        split: Tuple[int, int, int],
+    ) -> list[str]:
+        if not (notional and notional > 0 and price and math.isfinite(price) and price > 0):
+            return []
+        planned: Dict[str, Tuple[float, float]] = {}
+        with suppress(ValueError):
+            planned = ranges_for_price(price, bucket, include_a_on_high=False)
+        if not planned:
+            return []
+        amounts_map, unallocated = compute_amounts(
+            price,
+            split,
+            planned,
+            notional,
+            tilt_sol_frac,
+        )
+        if not amounts_map:
+            return []
+        lines: list[str] = []
+        for band in ("a", "b", "c"):
+            if band in amounts_map:
+                sol_amt, usdc_amt = amounts_map[band]
+                lines.append(f"{band.upper()} amount: {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC")
+        if unallocated > 0.005:
+            lines.append(f"unallocated: ${unallocated:.2f}")
+        return lines
+
+    def _drift_summary(
+        self,
+        baseline: Optional[Tuple[float, float, int]],
+        latest: Optional[Tuple[int, float, float, float, float]],
+        price: Optional[float],
+    ) -> Optional[str]:
+        if price and math.isfinite(price) and price > 0 and baseline and latest:
+            base_sol, base_usdc, _ = baseline
+            _, snap_sol, snap_usdc, _, _ = latest
+            base_val = max(base_sol, 0.0) * price + max(base_usdc, 0.0)
+            cur_val = max(snap_sol, 0.0) * price + max(snap_usdc, 0.0)
+            if math.isfinite(base_val) and math.isfinite(cur_val):
+                drift = cur_val - base_val
+                if math.isfinite(drift):
+                    pct = (drift / base_val) if base_val > 0 else 0.0
+                    pct = pct if math.isfinite(pct) else 0.0
+                    return f"<b>Drift</b>: ${drift:+.2f} ({pct * 100:+.2f}%)"
+        if latest:
+            _, _, _, snap_price, snap_drift = latest
+            if math.isfinite(snap_price) and math.isfinite(snap_drift):
+                return f"<b>Drift</b> (Last @ <b>{snap_price:.2f}</b>): ${snap_drift:+.2f}"
+        return None
+
     async def start(self, repo: DBRepo) -> None:
         if self._app is not None:
             return
@@ -58,21 +248,13 @@ class TelegramSvc:
             candidate = getattr(repo, "_log", None)
             if candidate is not None:
                 self._log = cast(FilteringBoundLogger, candidate).bind(module="telegram")
-        app = Application.builder().token(self._token).build()
-        app.add_handler(CommandHandler("start", self._on_start))
-        app.add_handler(CommandHandler("help", self._on_help))
-        app.add_handler(CommandHandler("status", self._on_status))
-        app.add_handler(CommandHandler("bands", self._on_bands))
-        app.add_handler(CommandHandler("setbaseline", self._on_setbaseline))
-        app.add_handler(CommandHandler("setnotional", self._on_setnotional))
-        app.add_handler(CommandHandler("settilt", self._on_settilt))
-        app.add_handler(CommandHandler("updatebalances", self._on_updatebalances))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text_any))
-        app.add_handler(CallbackQueryHandler(self._on_alert_action, pattern=r"^alert:(accept|ignore|set):[abc]$"))
-        app.add_handler(CallbackQueryHandler(self._on_adv_action, pattern=r"^adv:(apply|ignore|set)$"))
-        app.add_handler(CallbackQueryHandler(self._on_bands_pick, pattern=r"^b:[abc]$"))
-        app.add_handler(CallbackQueryHandler(self._on_bands_back, pattern=r"^b:back$"))
-        app.add_handler(CallbackQueryHandler(self._on_callback))
+        app = (
+            Application.builder()
+            .token(self._token)
+            .defaults(Defaults(parse_mode=ParseMode.HTML))
+            .build()
+        )
+        self._add_handlers(app)
 
         self._app = app
         await app.initialize()
@@ -82,6 +264,31 @@ class TelegramSvc:
         else:
             raise RuntimeError("Application updater not available; cannot start polling")
         self._ready.set()
+
+    def _add_handlers(self, app: Application) -> None:
+        for name, fn in [
+            ("start", self._on_start),
+            ("help", self._on_help),
+            ("status", self._on_status),
+            ("bands", self._on_bands),
+            ("setbaseline", self._on_setbaseline),
+            ("setnotional", self._on_setnotional),
+            ("settilt", self._on_settilt),
+            ("updatebalances", self._on_updatebalances),
+        ]:
+            app.add_handler(CommandHandler(name, fn))
+
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text_any))
+
+        for pattern, fn in [
+            (r"^alert:(accept|ignore|set):[abc]$", self._on_alert_action),
+            (r"^adv:(apply|ignore|set)$", self._on_adv_action),
+            (r"^b:[abc]$", self._on_bands_pick),
+            (r"^b:back$", self._on_bands_back),
+        ]:
+            app.add_handler(CallbackQueryHandler(fn, pattern=pattern))
+
+        app.add_handler(CallbackQueryHandler(self._on_callback))
 
     async def stop(self) -> None:
         if self._app is None:
@@ -103,13 +310,7 @@ class TelegramSvc:
         self._log = None
 
     async def send_text(self, text: str) -> None:
-        app = self._ensure_app()
-        await self._ready.wait()
-        await app.bot.send_message(
-            chat_id=self._chat_id,
-            text=text,
-            parse_mode="HTML",
-        )
+        await self._send(text)
 
     async def send_advisory_card(
         self, advisory: Dict[str, Any], drift_line: Optional[str] = None
@@ -124,23 +325,15 @@ class TelegramSvc:
         bucket = str(advisory["bucket"])
         ranges = cast(Dict[str, Tuple[float, float]], cast(Any, advisory["ranges"]))
 
-        split_raw = advisory.get("split")
         split: Optional[Tuple[int, int, int]] = None
-        if isinstance(split_raw, (list, tuple)) and len(split_raw) == 3:
-            try:
-                split = (
-                    int(float(split_raw[0])),
-                    int(float(split_raw[1])),
-                    int(float(split_raw[2])),
-                )
-            except (TypeError, ValueError):
-                split = None
-        if split is None:
-            try:
+        raw_split = advisory.get("split")
+        if isinstance(raw_split, (list, tuple)) and len(raw_split) == 3:
+            with suppress(Exception):
+                split = tuple(int(float(item)) for item in raw_split)  # type: ignore[misc]
+        if not split:
+            with suppress(ValueError):
                 split = split_for_bucket(bucket)
-            except ValueError:
-                split = split_for_sigma(sigma_pct)
-        if split is None:
+        if not split:
             split = split_for_sigma(sigma_pct)
 
         notional = await repo.get_notional_usd()
@@ -179,9 +372,8 @@ class TelegramSvc:
             chat_id=self._chat_id,
             text=text,
             reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="HTML",
         )
-        self._pending[message.message_id] = ("adv", dict(ranges))
+        self._pending[message.message_id] = (self._PENDING_ADV, dict(ranges))
         self._prune_pending()
 
     async def send_breach_offer(
@@ -259,9 +451,8 @@ class TelegramSvc:
             chat_id=self._chat_id,
             text=text,
             reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="HTML",
         )
-        self._pending[message.message_id] = ("alert", (band, suggested_range))
+        self._pending[message.message_id] = (self._PENDING_ALERT, (band, suggested_range))
         self._prune_pending()
 
     def _ensure_app(self) -> Application:
@@ -291,32 +482,12 @@ class TelegramSvc:
         except Exception:
             return None
 
+    @_auth_cmd
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
-            return
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text="[<i>Online</i>] Bot ready. Use <code>/status</code> for details.",
-            parse_mode="HTML",
-        )
+        await self._send("[<i>Online</i>] Bot ready. Use <code>/status</code> for details.")
 
+    @_auth_cmd
     async def _on_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
-            return
         help_lines = [
             "<b>Commands</b>:",
             "<code>/status</code> — latest price, σ, bands, policy split",
@@ -328,22 +499,10 @@ class TelegramSvc:
             "<code>/help</code> — show this list",
             "Token amounts are advisory (tilt-based), not exact DLMM quotes.",
         ]
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text="\n".join(help_lines),
-            parse_mode="HTML",
-        )
+        await self._send("\n".join(help_lines))
 
+    @_auth_cmd
     async def _on_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
-            return
         repo = self._ensure_repo()
         price = await self._get_price()
         sigma = await self._get_sigma()
@@ -351,49 +510,24 @@ class TelegramSvc:
         latest = await repo.get_latest_snapshot()
         baseline = await repo.get_baseline()
 
-        lines = []
-        if price is not None and math.isfinite(price):
-            lines.append(f"<b>Price</b>: {price:.2f}")
-        else:
-            lines.append("<b>Price</b>: Unknown")
+        lines: list[str] = []
+        lines.append(f"<b>Price</b>: {price:.2f}" if (price and math.isfinite(price)) else "<b>Price</b>: Unknown")
 
-        sigma_bucket = sigma.bucket if sigma else "mid"
-        sigma_bucket_label = sigma_bucket.title()
-        sigma_pct_value: Optional[float] = None
-        sigma_display = "–"
-        sigma_stale = False
-        if sigma:
-            if math.isfinite(sigma.sigma_pct):
-                sigma_pct_value = float(sigma.sigma_pct)
-                sigma_display = f"{sigma_pct_value:.2f}%"
-            sigma_stale = sigma.stale
-        sigma_line = f"<b>Volatility</b>: {sigma_display} ({escape(sigma_bucket_label)})"
-        if sigma_stale:
-            sigma_line = f"{sigma_line} [<i>Stale</i>]"
+        sigma_line, bucket, sigma_pct = self._sigma_summary(sigma)
         lines.append(sigma_line)
 
         lines.append("<b>Configured Bands</b>:")
-        if bands:
-            for name in sorted(bands.keys()):
-                lo, hi = bands[name]
-                lines.append(f"{escape(name.upper())}: {fmt_range(lo, hi)}")
-        else:
-            lines.append("(No bands configured)")
+        lines.extend(self._bands_lines(bands))
 
-        split = split_for_sigma(sigma_pct_value)
-        lines.append(
-            f"<b>Advisory Split</b>: {split[0]}/{split[1]}/{split[2]} ({escape(sigma_bucket_label)})"
-        )
+        split = split_for_sigma(sigma_pct)
+        bucket_label = escape(bucket.title())
+        lines.append(f"<b>Advisory Split</b>: {split[0]}/{split[1]}/{split[2]} ({bucket_label})")
 
         notional = await repo.get_notional_usd()
         tilt_sol_frac = await repo.get_tilt_sol_frac()
-        usdc_frac = 1.0 - tilt_sol_frac
         sol_pct = self._format_pct(tilt_sol_frac)
-        usdc_pct = self._format_pct(usdc_frac)
-        if notional is None or notional <= 0:
-            notional_display = "unset"
-        else:
-            notional_display = f"${notional:.2f}"
+        usdc_pct = self._format_pct(1.0 - tilt_sol_frac)
+        notional_display = "unset" if not (notional and notional > 0) else f"${notional:.2f}"
         lines.append(
             f"notional: {escape(notional_display)} | tilt sol/usdc: {escape(sol_pct)}/{escape(usdc_pct)}"
         )
@@ -404,180 +538,60 @@ class TelegramSvc:
         else:
             lines.append("<b>Balances</b>: (none; run /updatebalances)")
 
-        if (
-            notional is not None
-            and notional > 0
-            and price is not None
-            and math.isfinite(price)
-            and price > 0
-        ):
-            try:
-                planned_ranges = ranges_for_price(
-                    price,
-                    sigma_bucket,
-                    include_a_on_high=False,
-                )
-            except ValueError:
-                planned_ranges = {}
+        lines.extend(self._amounts_lines(price, bucket, notional, tilt_sol_frac, split))
 
-            if planned_ranges:
-                amounts_map, unallocated_usd = compute_amounts(
-                    price,
-                    split,
-                    planned_ranges,
-                    notional,
-                    tilt_sol_frac,
-                )
-                if amounts_map:
-                    for band_name in ("a", "b", "c"):
-                        if band_name not in amounts_map:
-                            continue
-                        sol_amt, usdc_amt = amounts_map[band_name]
-                        lines.append(
-                            f"{escape(band_name.upper())} amount: {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC"
-                        )
-                    if unallocated_usd > 0.005:
-                        lines.append(f"unallocated: ${unallocated_usd:.2f}")
+        drift_line = self._drift_summary(baseline, latest, price)
+        if drift_line:
+            lines.append(drift_line)
 
-        if price is not None and math.isfinite(price) and price > 0 and baseline and latest:
-            base_sol, base_usdc, _ = baseline
-            _snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
-            base_val_now = max(base_sol, 0.0) * price + max(base_usdc, 0.0)
-            cur_val_now = max(snap_sol, 0.0) * price + max(snap_usdc, 0.0)
-            if math.isfinite(base_val_now) and math.isfinite(cur_val_now):
-                drift_now = cur_val_now - base_val_now
-                if math.isfinite(drift_now):
-                    drift_pct = (drift_now / base_val_now) if base_val_now > 0 else 0.0
-                    if not math.isfinite(drift_pct):
-                        drift_pct = 0.0
-                    lines.append(
-                        f"<b>Drift</b>: ${drift_now:+.2f} ({drift_pct * 100:+.2f}%)"
-                    )
-                else:
-                    lines.append("<b>Drift</b>: Unavailable")
-            else:
-                lines.append("<b>Drift</b>: Unavailable")
-        elif latest:
-            _snap_ts, _snap_sol, _snap_usdc, snap_price, snap_drift = latest
-            if math.isfinite(snap_price) and math.isfinite(snap_drift):
-                lines.append(
-                    f"<b>Drift</b> (Last @ <b>{snap_price:.2f}</b>): ${snap_drift:+.2f}"
-                )
+        await self._send("\n".join(lines))
 
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text="\n".join(lines),
-            parse_mode="HTML",
-        )
-
+    @_auth_cmd
     async def _on_setbaseline(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
-            return
-
         message = update.message
         text = message.text if message and message.text else ""
         parsed = self._parse_two_numbers(text)
         if parsed is None:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=(
-                    "[<i>Usage</i>] <code>/setbaseline &lt;sol&gt; sol &lt;usdc&gt; usdc</code> "
-                    "(e.g. <code>/setbaseline 1.0 sol 200 usdc</code>)"
-                ),
-                parse_mode="HTML",
-            )
+            await self._send(self._USAGE_SETBASELINE)
             return
 
         sol, usdc = parsed
         sol = max(sol, 0.0)
         usdc = max(usdc, 0.0)
         if not (math.isfinite(sol) and math.isfinite(usdc)):
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=(
-                    "[<i>Usage</i>] <code>/setbaseline &lt;sol&gt; sol &lt;usdc&gt; usdc</code> "
-                    "(e.g. <code>/setbaseline 1.0 sol 200 usdc</code>)"
-                ),
-                parse_mode="HTML",
-            )
+            await self._send(self._USAGE_SETBASELINE)
             return
 
         repo = self._ensure_repo()
         ts = int(time.time())
         await repo.set_baseline(sol, usdc, ts)
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text=(
-                f"[<i>Applied</i>] Baseline → {sol:g} SOL, {usdc:g} USDC"
-            ),
-            parse_mode="HTML",
-        )
+        await self._send(f"[<i>Applied</i>] Baseline → {sol:g} SOL, {usdc:g} USDC")
 
+    @_auth_cmd
     async def _on_updatebalances(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
-            return
-
         message = update.message
         text = message.text if message and message.text else ""
         parsed = self._parse_two_numbers(text)
         if parsed is None:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=(
-                    "[<i>Usage</i>] <code>/updatebalances &lt;sol&gt; sol &lt;usdc&gt; usdc</code> "
-                    "(e.g. <code>/updatebalances 1.0 sol 200 usdc</code>)"
-                ),
-                parse_mode="HTML",
-            )
+            await self._send(self._USAGE_UPDATEBAL)
             return
 
         sol_amt, usdc_amt = parsed
         sol_amt = max(sol_amt, 0.0)
         usdc_amt = max(usdc_amt, 0.0)
         if not (math.isfinite(sol_amt) and math.isfinite(usdc_amt)):
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=(
-                    "[<i>Usage</i>] <code>/updatebalances &lt;sol&gt; sol &lt;usdc&gt; usdc</code> "
-                    "(e.g. <code>/updatebalances 1.0 sol 200 usdc</code>)"
-                ),
-                parse_mode="HTML",
-            )
+            await self._send(self._USAGE_UPDATEBAL)
             return
 
         price = await self._get_price()
         if price is None or not math.isfinite(price) or price <= 0:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Error</i>] Price unavailable. Try again later.",
-                parse_mode="HTML",
-            )
+            await self._send("[<i>Error</i>] Price unavailable. Try again later.")
             return
 
         repo = self._ensure_repo()
         baseline = await repo.get_baseline()
         if baseline is None:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=(
-                    "[<i>Error</i>] Baseline not set. Run <code>/setbaseline</code> first."
-                ),
-                parse_mode="HTML",
-            )
+            await self._send("[<i>Error</i>] Baseline not set. Run <code>/setbaseline</code> first.")
             return
 
         base_sol, base_usdc, _ = baseline
@@ -587,20 +601,12 @@ class TelegramSvc:
         base_val = base_sol * price + base_usdc
         cur_val = sol_amt * price + usdc_amt
         if not (math.isfinite(base_val) and math.isfinite(cur_val)):
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Error</i>] Unable to compute drift.",
-                parse_mode="HTML",
-            )
+            await self._send("[<i>Error</i>] Unable to compute drift.")
             return
 
         drift = cur_val - base_val
         if not math.isfinite(drift):
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Error</i>] Unable to compute drift.",
-                parse_mode="HTML",
-            )
+            await self._send("[<i>Error</i>] Unable to compute drift.")
             return
 
         drift_pct = (drift / base_val) if base_val > 0 else 0.0
@@ -610,178 +616,96 @@ class TelegramSvc:
         ts = int(time.time())
         await repo.insert_snapshot(ts, sol_amt, usdc_amt, price, drift)
 
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text=(
-                f"[<i>Applied</i>] <b>Drift</b>: ${drift:+.2f} ({drift_pct * 100:+.2f}%) | "
-                f"<b>Base</b> ${base_val:.2f} → <b>Now</b> ${cur_val:.2f} @ "
-                f"Price <b>{price:.2f}</b>"
-            ),
-            parse_mode="HTML",
+        await self._send(
+            f"[<i>Applied</i>] <b>Drift</b>: ${drift:+.2f} ({drift_pct * 100:+.2f}%) | "
+            f"<b>Base</b> ${base_val:.2f} → <b>Now</b> ${cur_val:.2f} @ "
+            f"Price <b>{price:.2f}</b>"
         )
 
+    @_auth_cmd
     async def _on_setnotional(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
-            return
 
         message = update.message
         text = message.text if message and message.text else ""
         value = self._parse_first_number(text)
         if value is None or not math.isfinite(value) or value < 0:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Usage</i>] <code>/setnotional &lt;usd&gt;</code> (e.g. <code>/setnotional 2500</code>)",
-                parse_mode="HTML",
-            )
+            await self._send(self._USAGE_SETNOTIONAL)
             return
 
         repo = self._ensure_repo()
         try:
             await repo.set_notional_usd(float(value))
         except ValueError:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Error</i>] Notional must be finite and non-negative.",
-                parse_mode="HTML",
-            )
+            await self._send("[<i>Error</i>] Notional must be finite and non-negative.")
             return
 
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text=f"[<i>Applied</i>] Notional → ${float(value):.2f}",
-            parse_mode="HTML",
-        )
+        await self._send(f"[<i>Applied</i>] Notional → ${float(value):.2f}")
 
+    @_auth_cmd
     async def _on_settilt(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
-            return
 
         message = update.message
         text = message.text if message and message.text else ""
         parsed = self._parse_tilt_sol_usdc(text)
         if parsed is None:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=(
-                    "[<i>Usage</i>] <code>/settilt &lt;sol&gt;:&lt;usdc&gt;</code> "
-                    "(e.g. <code>/settilt 60:40</code> or <code>/settilt 0.6</code>)"
-                ),
-                parse_mode="HTML",
-            )
+            await self._send(self._USAGE_SETTILT)
             return
 
         sol_frac, usdc_frac = parsed
         if not (math.isfinite(sol_frac) and math.isfinite(usdc_frac)):
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Error</i>] Invalid tilt values.",
-                parse_mode="HTML",
-            )
+            await self._send("[<i>Error</i>] Invalid tilt values.")
             return
 
         total = sol_frac + usdc_frac
-        if total <= 0:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Error</i>] Tilt must allocate some share to SOL or USDC.",
-                parse_mode="HTML",
-            )
+        if not math.isfinite(total) or total <= 0:
+            await self._send("[<i>Error</i>] Tilt must allocate some share to SOL or USDC.")
             return
 
-        sol_frac = min(max(sol_frac, 0.0), 1.0)
-        usdc_frac = min(max(usdc_frac, 0.0), 1.0)
+        sol_frac = self._clamp01(sol_frac)
+        usdc_frac = self._clamp01(usdc_frac)
         total = sol_frac + usdc_frac
         if total == 0:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Error</i>] Tilt must allocate some share to SOL or USDC.",
-                parse_mode="HTML",
-            )
+            await self._send("[<i>Error</i>] Tilt must allocate some share to SOL or USDC.")
             return
 
         sol_frac /= total
-        usdc_frac /= total
+        usdc_frac = 1.0 - sol_frac
 
         repo = self._ensure_repo()
         await repo.set_tilt_sol_frac(sol_frac)
 
         sol_pct = self._format_pct(sol_frac)
         usdc_pct = self._format_pct(usdc_frac)
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text=(
-                f"[<i>Applied</i>] Tilt → SOL/USDC = {escape(sol_pct)}/{escape(usdc_pct)}"
-            ),
-            parse_mode="HTML",
-        )
+        await self._send(f"[<i>Applied</i>] Tilt → SOL/USDC = {escape(sol_pct)}/{escape(usdc_pct)}")
 
     def _bands_menu_text(self, bands: Dict[str, Tuple[float, float]]) -> str:
         if not bands:
             return "(No bands configured)"
-        lines = ["<b>Configured Bands</b>:"]
-        for name in sorted(bands.keys()):
-            lo, hi = bands[name]
-            lines.append(f"{escape(name.upper())}: {fmt_range(lo, hi)}")
-        return "\n".join(lines)
+        return "\n".join(
+            ["<b>Configured Bands</b>:"] + [f"{escape(n.upper())}: {fmt_range(*rng)}" for n, rng in sorted(bands.items())]
+        )
 
     def _bands_menu_kb(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
-            [
-                [InlineKeyboardButton("Edit A", callback_data="b:a")],
-                [InlineKeyboardButton("Edit B", callback_data="b:b")],
-                [InlineKeyboardButton("Edit C", callback_data="b:c")],
-            ]
+            [[InlineKeyboardButton(f"Edit {c}", callback_data=f"b:{c.lower()}")] for c in "ABC"]
         )
 
+    @_auth_cmd
     async def _on_bands(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
-            return
         repo = self._ensure_repo()
         bands = await repo.get_bands()
         text = self._bands_menu_text(bands)
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text=text,
-            reply_markup=self._bands_menu_kb(),
-            parse_mode="HTML",
-        )
+        await self._send(text, reply_markup=self._bands_menu_kb())
 
+    @_auth_cb
     async def _on_bands_pick(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
-        if query is None:
-            return
-        if not self._is_authorized(update):
-            await query.answer("[<i>Unauthorized</i>]", show_alert=True)
-            return
-
-        data = query.data or ""
-        parts = data.split(":")
-        if len(parts) != 2:
+        data = (query.data or "").split(":")
+        if len(data) != 2:
             await query.answer()
             return
 
-        band = parts[1]
+        band = data[1]
         repo = self._ensure_repo()
         bands = await repo.get_bands()
         current = bands.get(band)
@@ -796,83 +720,44 @@ class TelegramSvc:
             "Send <code>low high</code> or tap Back."
         )
         back_markup = InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="b:back")]])
-        try:
-            await query.edit_message_text(
-                editor_text,
-                reply_markup=back_markup,
-                parse_mode="HTML",
-            )
-        except Exception:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=editor_text,
-                reply_markup=back_markup,
-                parse_mode="HTML",
-            )
+        await self._edit_or_send(query, editor_text, reply_markup=back_markup)
 
         mid = query.message.message_id if query.message else None
         context.chat_data["await_exact"] = {"mid": mid, "band": band}
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text=f"Enter <code>low high</code> for <b>{band_label}</b>.",
+        await self._send(
+            f"Enter <code>low high</code> for <b>{band_label}</b>.",
             reply_markup=ForceReply(selective=True, input_field_placeholder="low high"),
-            parse_mode="HTML",
         )
 
+    @_auth_cb
     async def _on_bands_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
-        if query is None:
-            return
-        if not self._is_authorized(update):
-            await query.answer("[<i>Unauthorized</i>]", show_alert=True)
-            return
-
         repo = self._ensure_repo()
         bands = await repo.get_bands()
         await query.answer()
-        try:
-            await query.edit_message_text(
-                self._bands_menu_text(bands),
-                reply_markup=self._bands_menu_kb(),
-                parse_mode="HTML",
-            )
-        except Exception:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=self._bands_menu_text(bands),
-                reply_markup=self._bands_menu_kb(),
-                parse_mode="HTML",
-            )
+        await self._edit_or_send(
+            query,
+            self._bands_menu_text(bands),
+            reply_markup=self._bands_menu_kb(),
+        )
 
+    @_auth_cb
     async def _on_alert_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
-        if query is None:
-            return
-        if not self._is_authorized(update):
-            await query.answer("[<i>Unauthorized</i>]", show_alert=True)
-            return
-
-        data = query.data or ""
-        parts = data.split(":")
+        parts = (query.data or "").split(":")
         if len(parts) != 3:
             await query.answer()
             return
 
         action, band = parts[1], parts[2]
-        message = query.message
-        mid = message.message_id if message else None
-        if mid is None or mid not in self._pending:
-            await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
+        pending = await self._pop_pending(query, self._PENDING_ALERT, stale_text=self._STALE_ALERT)
+        if not pending:
             return
 
-        kind, payload = self._pending[mid]
-        if kind != "alert":
-            await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
-            return
-
+        mid, payload = pending
         pending_band, rng = cast(Tuple[str, Tuple[float, float]], payload)
         if pending_band != band:
-            await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
+            await query.answer(self._STALE_ALERT, show_alert=True)
             return
 
         await query.answer()
@@ -882,93 +767,43 @@ class TelegramSvc:
             repo = self._ensure_repo()
             await repo.upsert_band(band, rng[0], rng[1])
             if self._log is not None:
-                try:
+                with suppress(Exception):
                     self._log.info("breach_applied", band=band, low=rng[0], high=rng[1])
-                except Exception:
-                    pass
             del self._pending[mid]
-            applied_text = f"[<i>Applied</i>] {band_label} → {fmt_range(*rng)}"
-            try:
-                await query.edit_message_text(
-                    applied_text,
-                    parse_mode="HTML",
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=self._chat_id,
-                    text=applied_text,
-                    parse_mode="HTML",
-                )
-        elif action == "ignore":
+            await self._edit_or_send(query, f"[<i>Applied</i>] {band_label} → {fmt_range(*rng)}")
+            return
+
+        if action == "ignore":
             del self._pending[mid]
-            dismissed_text = "[<i>Dismissed</i>]"
-            try:
-                await query.edit_message_text(
-                    dismissed_text,
-                    parse_mode="HTML",
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=self._chat_id,
-                    text=dismissed_text,
-                    parse_mode="HTML",
-                )
-        elif action == "set":
+            await self._edit_or_send(query, "[<i>Dismissed</i>]")
+            return
+
+        if action == "set":
             context.chat_data["await_exact"] = {"mid": mid, "band": band}
             prompt_text = (
                 f"Send <code>low high</code> for band <b>{band_label}</b> "
                 f"(e.g. <code>141.25 159.75</code>)."
             )
-            try:
-                await query.edit_message_text(
-                    prompt_text,
-                    parse_mode="HTML",
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=self._chat_id,
-                    text=prompt_text,
-                    parse_mode="HTML",
-                )
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=f"Enter <code>low high</code> for <b>{band_label}</b>.",
+            await self._edit_or_send(query, prompt_text)
+            await self._send(
+                f"Enter <code>low high</code> for <b>{band_label}</b>.",
                 reply_markup=ForceReply(selective=True, input_field_placeholder="low high"),
-                parse_mode="HTML",
             )
 
+    @_auth_cb
     async def _on_adv_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
-        if query is None:
-            return
-        if not self._is_authorized(update):
-            await query.answer("[<i>Unauthorized</i>]", show_alert=True)
-            return
-
-        data = query.data or ""
-        parts = data.split(":")
+        parts = (query.data or "").split(":")
         if len(parts) != 2:
             await query.answer()
             return
 
         action = parts[1]
-        message = query.message
-        mid = message.message_id if message else None
-        if mid is None or mid not in self._pending:
-            await query.answer(
-                "[<i>Stale</i>] This advisory is no longer active.",
-                show_alert=True,
-            )
+        pending = await self._pop_pending(query, self._PENDING_ADV, stale_text=self._STALE_ADV)
+        if not pending:
             return
 
-        kind, payload = self._pending[mid]
-        if kind != "adv":
-            await query.answer(
-                "[<i>Stale</i>] This advisory is no longer active.",
-                show_alert=True,
-            )
-            return
-
+        mid, payload = pending
         ranges = cast(Dict[str, Tuple[float, float]], payload)
 
         await query.answer()
@@ -981,98 +816,50 @@ class TelegramSvc:
                 await repo.upsert_many(filtered)
             except Exception as exc:
                 if self._log is not None:
-                    try:
-                        self._log.error(
-                            "advisory_apply_failed",
-                            error=str(exc),
-                        )
-                    except Exception:
-                        pass
-                await context.bot.send_message(
-                    chat_id=self._chat_id,
-                    text="[<i>Error</i>] Apply failed. Please retry.",
-                    parse_mode="HTML",
-                )
+                    with suppress(Exception):
+                        self._log.error("advisory_apply_failed", error=str(exc))
+                await self._send("[<i>Error</i>] Apply failed. Please retry.")
                 return
 
             del self._pending[mid]
             if self._log is not None:
-                try:
+                with suppress(Exception):
                     self._log.info(
                         "advisory_applied",
                         ranges={
                             name: (rng[0], rng[1]) for name, rng in sorted(filtered.items())
                         },
                     )
-                except Exception:
-                    pass
             summary = ", ".join(
                 f"{escape(name.upper())}→{fmt_range(*rng)}" for name, rng in sorted(filtered.items())
             )
-            message_text = (
-                f"[<i>Applied</i>] {summary}" if summary else "[<i>Applied</i>]"
+            await self._edit_or_send(
+                query,
+                f"[<i>Applied</i>] {summary}" if summary else "[<i>Applied</i>]",
             )
-            try:
-                await query.edit_message_text(
-                    message_text,
-                    parse_mode="HTML",
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=self._chat_id,
-                    text=message_text,
-                    parse_mode="HTML",
-                )
-        elif action == "ignore":
-            del self._pending[mid]
-            dismissed_text = "[<i>Dismissed</i>]"
-            try:
-                await query.edit_message_text(
-                    dismissed_text,
-                    parse_mode="HTML",
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=self._chat_id,
-                    text=dismissed_text,
-                    parse_mode="HTML",
-                )
-        elif action == "set":
-            del self._pending[mid]
-            try:
-                await query.edit_message_text(
-                    "Select a band to edit.",
-                    reply_markup=self._bands_menu_kb(),
-                    parse_mode="HTML",
-                )
-            except Exception:
-                await context.bot.send_message(
-                    chat_id=self._chat_id,
-                    text="Select a band to edit.",
-                    reply_markup=self._bands_menu_kb(),
-                    parse_mode="HTML",
-                )
+            return
 
+        if action == "ignore":
+            del self._pending[mid]
+            await self._edit_or_send(query, "[<i>Dismissed</i>]")
+            return
+
+        if action == "set":
+            del self._pending[mid]
+            await self._edit_or_send(
+                query,
+                "Select a band to edit.",
+                reply_markup=self._bands_menu_kb(),
+            )
+
+    @_auth_cb
     async def _on_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.callback_query is None:
-            return
-        if not self._is_authorized(update):
-            await update.callback_query.answer("[<i>Unauthorized</i>]", show_alert=True)
-            return
         await update.callback_query.answer()
 
+    @_auth_cmd
     async def _on_text_any(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.message
         if message is None:
-            return
-        if not self._is_authorized(update):
-            chat = update.effective_chat
-            if chat is not None:
-                await context.bot.send_message(
-                    chat_id=chat.id,
-                    text="[<i>Unauthorized</i>]",
-                    parse_mode="HTML",
-                )
             return
 
         state = context.chat_data.get("await_exact")
@@ -1087,11 +874,7 @@ class TelegramSvc:
             if not (math.isfinite(low) and math.isfinite(high) and low < high):
                 raise ValueError
         except ValueError:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text="[<i>Invalid</i>] Expected two numbers: <code>low high</code>.",
-                parse_mode="HTML",
-            )
+            await self._send("[<i>Invalid</i>] Expected two numbers: <code>low high</code>.")
             return
 
         band = state.get("band")
@@ -1107,132 +890,57 @@ class TelegramSvc:
             del self._pending[mid]
         band_label = escape(band.upper())
         applied_text = f"[<i>Applied</i>] {band_label} → {fmt_range(low, high)}"
-        try:
-            if isinstance(mid, int):
-                await context.bot.edit_message_text(
-                    chat_id=self._chat_id,
-                    message_id=mid,
-                    text=applied_text,
-                    parse_mode="HTML",
-                )
-            else:
-                raise ValueError
-        except Exception:
-            await context.bot.send_message(
-                chat_id=self._chat_id,
-                text=applied_text,
-                parse_mode="HTML",
-            )
+        sent = isinstance(mid, int) and await self._edit_by_id(mid, applied_text)
+        if not sent:
+            await self._send(applied_text)
 
         if self._log is not None:
-            try:
+            with suppress(Exception):
                 self._log.info("bands_set_exact", band=band, low=low, high=high)
-            except Exception:
-                pass
 
         bands = await repo.get_bands()
-        await context.bot.send_message(
-            chat_id=self._chat_id,
-            text=self._bands_menu_text(bands),
+        await self._send(
+            self._bands_menu_text(bands),
             reply_markup=self._bands_menu_kb(),
-            parse_mode="HTML",
         )
 
         context.chat_data.pop("await_exact", None)
 
     def _parse_first_number(self, text: str) -> Optional[float]:
-        tokens = text.split()
-        for token in tokens:
-            if token.startswith("/"):
-                continue
-            try:
-                candidate = float(token.replace(",", ""))
-            except ValueError:
-                continue
-            if math.isfinite(candidate):
-                return candidate
-        return None
+        nums = self._extract_numbers(text, 1, ignore_labels=set())
+        return nums[0] if nums else None
 
     def _parse_tilt_sol_usdc(self, text: str) -> Optional[Tuple[float, float]]:
-        normalized = text.replace(":", " ").replace("/", " ")
-        tokens = normalized.split()
-        numbers: list[float] = []
-        for token in tokens:
-            if token.startswith("/"):
-                continue
-            label = token.strip().lower()
-            if label in {"sol", "usdc"}:
-                continue
-            try:
-                value = float(token.replace(",", ""))
-            except ValueError:
-                continue
-            if not math.isfinite(value):
-                continue
-            numbers.append(value)
-            if len(numbers) == 2:
-                break
-
+        numbers = self._extract_numbers(text, 2, ignore_labels={"sol", "usdc"})
         if not numbers:
             return None
 
         if len(numbers) == 1:
             sol_raw = numbers[0]
-            if not math.isfinite(sol_raw):
-                return None
-            if sol_raw > 1:
-                sol_frac = sol_raw / 100.0
-            else:
-                sol_frac = sol_raw
-            if not math.isfinite(sol_frac):
-                return None
-            sol_frac = min(max(sol_frac, 0.0), 1.0)
+            sol_frac = sol_raw / (100.0 if sol_raw > 1 else 1.0)
+            sol_frac = self._clamp01(sol_frac)
             return sol_frac, 1.0 - sol_frac
 
         sol_raw, usdc_raw = numbers[0], numbers[1]
         if not (math.isfinite(sol_raw) and math.isfinite(usdc_raw)):
             return None
         total = sol_raw + usdc_raw
-        if total <= 0 or not math.isfinite(total):
+        if not math.isfinite(total) or total <= 0:
             return None
-        sol_frac = sol_raw / total
-        usdc_frac = usdc_raw / total
-        sol_frac = min(max(sol_frac, 0.0), 1.0)
-        usdc_frac = min(max(usdc_frac, 0.0), 1.0)
-        total = sol_frac + usdc_frac
-        if total == 0 or not math.isfinite(total):
-            return None
-        sol_frac /= total
-        usdc_frac /= total
-        return sol_frac, usdc_frac
+        sol_frac = self._clamp01(sol_raw / total)
+        return sol_frac, 1.0 - sol_frac
 
     def _format_pct(self, fraction: float) -> str:
-        pct_value = round(float(fraction) * 100.0, 1)
+        try:
+            pct_value = round(float(fraction) * 100.0, 1)
+        except Exception:
+            pct_value = 0.0
         if not math.isfinite(pct_value):
             pct_value = 0.0
-        if pct_value.is_integer():
-            return str(int(pct_value))
-        return f"{pct_value:.1f}"
+        return str(int(pct_value)) if pct_value.is_integer() else f"{pct_value:.1f}"
 
     def _parse_two_numbers(self, text: str) -> Optional[Tuple[float, float]]:
-        tokens = text.split()
-        numbers: list[float] = []
-        for token in tokens:
-            if token.startswith("/"):
-                continue
-            label = token.strip().lower()
-            if label in {"sol", "usdc"}:
-                continue
-            try:
-                token_clean = token.replace(",", "")
-                value = float(token_clean)
-            except ValueError:
-                continue
-            if not math.isfinite(value):
-                continue
-            numbers.append(value)
-            if len(numbers) == 2:
-                break
+        numbers = self._extract_numbers(text, 2, ignore_labels={"sol", "usdc"})
         if len(numbers) < 2:
             return None
         return numbers[0], numbers[1]
@@ -1240,6 +948,18 @@ class TelegramSvc:
     def _is_authorized(self, update: Update) -> bool:
         chat = update.effective_chat
         return chat is not None and chat.id == self._chat_id
+
+    async def _reply_unauthorized(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat = update.effective_chat
+        if chat is None:
+            return
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=self._UNAUTHORIZED_HTML,
+        )
+
+    async def _alert_unauthorized(self, query: CallbackQuery) -> None:
+        await query.answer(self._UNAUTHORIZED_HTML, show_alert=True)
 
     def _ensure_repo(self) -> DBRepo:
         if self._repo is None:
