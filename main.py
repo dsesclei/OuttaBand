@@ -30,7 +30,7 @@ import band_advisor
 import volatility as vol
 from telegram_service import TelegramSvc
 import net
-from shared_types import BAND_ORDER, AdvisoryPayload, BandMap, BandName, Bucket
+from shared_types import BAND_ORDER, AdvisoryPayload, BandMap, BandName, Bucket, Side
 
 
 # ----------------------------
@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     CHECK_EVERY_MINUTES: int = 15
     COOLDOWN_MINUTES: int = 60
     DB_PATH: str = "./app.db"
-    HTTP_UA_MAIN: str = "lpbot/0.1 (+https://github.com/dave/lpbot)"
-    HTTP_UA_VOL: str = "lpbot-volatility/0.1 (+https://github.com/dave/lpbot)"
+    HTTP_UA_MAIN: str = "outtaband/0.1 (+https://github.com/desclei/OuttaBand)"
+    HTTP_UA_VOL: str = "outtaband-volatility/0.1 (+https://github.com/dsesclei/OuttaBand)"
 
     # Optional band seeds (low-high). If provided, they will be upserted at startup.
     BAND_A: Optional[str] = None
@@ -303,7 +303,7 @@ async def process_breaches(
         if name not in broken:
             continue
 
-        side = "below" if price < lo else "above"
+        side: Side = "low" if price < lo else "high"
 
         # Persisted rows pre-date slot quantization, so floor before comparing.
         last = await repo.get_last_alert(name, side)
