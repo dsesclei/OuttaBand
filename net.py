@@ -14,7 +14,12 @@ RETRY_JITTER_MAX_FRACTION = 0.25
 
 
 def parse_retry_after(response: Optional[httpx.Response]) -> Optional[float]:
-    """Return seconds to wait from a Retry-After header if present."""
+    """Return wait seconds derived from a response's Retry-After header.
+
+    Both numeric seconds and HTTP-date values are accepted per RFC 7231. The
+    lookup is case-insensitive. ``None`` is returned when the header is absent
+    or cannot be parsed.
+    """
     if response is None:
         return None
 
@@ -63,7 +68,13 @@ async def request_with_retries(
     timeout: Optional[httpx.Timeout] = None,
     retry_on_status: Optional[Iterable[int]] = None,
 ) -> httpx.Response:
-    """Issue an HTTP request with retry handling."""
+    """Issue an HTTP request with retry/backoff handling.
+
+    Responses with configured status codes (default: ``429`` and all ``5xx``)
+    are retried with exponential backoff and jitter. Retry-After headers take
+    precedence over the calculated delay. All exceptions raised by httpx after
+    exhausting attempts propagate to the caller.
+    """
     if attempts < 1:
         raise ValueError("attempts must be >= 1")
     if base_backoff <= 0:

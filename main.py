@@ -510,6 +510,13 @@ async def send_daily_advisory() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Initialize core services and configure scheduler semantics.
+
+    The recurring price check job uses cron-style scheduling when
+    ``CHECK_EVERY_MINUTES`` divides 60 so runs stay aligned to wall-clock
+    boundaries (e.g., :00, :15). Otherwise an interval trigger preserves the
+    user-specified cadence without silently rounding to 15-minute buckets.
+    """
     global http_client, db_conn, repo, tg, scheduler
 
     # open db connection and init
