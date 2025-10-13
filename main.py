@@ -24,11 +24,11 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from zoneinfo import ZoneInfo
 
-from db_repo import dbrepo
+from db_repo import DBRepo
 from band_logic import broken_bands
 import band_advisor
 import volatility as vol
-from telegram_service import telegramsvc
+from telegram_service import TelegramSvc
 import net
 
 
@@ -45,13 +45,16 @@ class Settings(BaseSettings):
 
     CHECK_EVERY_MINUTES: int = 15
     COOLDOWN_MINUTES: int = 60
+    DB_PATH: str = "./app.db"
+    HTTP_UA_MAIN: str = "lpbot/0.1 (+https://github.com/dave/lpbot)"
+    HTTP_UA_VOL: str = "lpbot-volatility/0.1 (+https://github.com/dave/lpbot)"
 
     # Optional band seeds (low-high). If provided, they will be upserted at startup.
     BAND_A: Optional[str] = None
     BAND_B: Optional[str] = None
     BAND_C: Optional[str] = None
 
-    BINANCE_BASE_URL: str = "https://api.binance.us"
+    BINANCE_BASE_URL: str = "https://api.binance.com"
     BINANCE_SYMBOL: str = "SOLUSDT"
     VOL_CACHE_TTL_SECONDS: int = 60
     VOL_MAX_STALE_SECONDS: int = 7200
@@ -106,12 +109,10 @@ def floor_to_slot(ts: int) -> int:
 # Globals
 # ----------------------------
 
-DB_PATH = "./app.db"
-
 http_client: Optional[httpx.AsyncClient] = None
 db_conn: Optional[aiosqlite.Connection] = None
-repo: Optional[dbrepo] = None
-tg: Optional[telegramsvc] = None
+repo: Optional[DBRepo] = None
+tg: Optional[TelegramSvc] = None
 scheduler: Optional[AsyncIOScheduler] = None
 
 
@@ -196,7 +197,6 @@ log = base_log.bind(module="main")
 # ----------------------------
 
 DEFAULT_TIMEOUT = httpx.Timeout(7.5, read=7.5, write=7.5, connect=5.0, pool=5.0)
-UA = "sol-band-watch/0.1 (+github.com/you) httpx"
 
 async def fetch_json_with_retries(
     client: httpx.AsyncClient,
@@ -208,7 +208,7 @@ async def fetch_json_with_retries(
     attempts: int = 3,
     base_backoff: float = 0.5,
 ) -> Optional[Any]:
-    merged_headers = {"user-agent": UA, **(headers or {})}
+    merged_headers = {"user-agent": settings.HTTP_UA_MAIN, **(headers or {})}
     try:
         response = await net.request_with_retries(
             client,
@@ -356,6 +356,7 @@ async def get_sigma_reading() -> Optional[Dict[str, Any]]:
         symbol=settings.BINANCE_SYMBOL,
         cache_ttl=max(5, settings.VOL_CACHE_TTL_SECONDS),
         max_stale=settings.VOL_MAX_STALE_SECONDS,
+        user_agent=settings.HTTP_UA_VOL,
     )
     if reading is None:
         return None
@@ -553,14 +554,14 @@ async def lifespan(app: FastAPI):
     global http_client, db_conn, repo, tg, scheduler
 
     # open db connection and init
-    db_conn = await aiosqlite.connect(DB_PATH)
-    repo = dbrepo(db_conn, base_log.bind(module="db"))
+    db_conn = await aiosqlite.connect(settings.DB_PATH)
+    repo = DBRepo(db_conn, base_log.bind(module="db"))
     await repo.init(settings)
 
     # one httpx client (http/2), shared
     http_client = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
 
-    tg = telegramsvc(
+    tg = TelegramSvc(
         settings.TELEGRAM_BOT_TOKEN,
         settings.TELEGRAM_CHAT_ID,
         logger=base_log.bind(module="telegram"),
@@ -588,11 +589,14 @@ async def lifespan(app: FastAPI):
         meteora_url=settings.METEORA_BASE_URL,
         binance_url=settings.BINANCE_BASE_URL,
         binance_symbol=settings.BINANCE_SYMBOL,
+        db_path=settings.DB_PATH,
         local_tz=settings.LOCAL_TZ,
         daily_hour=settings.DAILY_LOCAL_HOUR,
         daily_minute=settings.DAILY_LOCAL_MINUTE,
         include_a_on_high=settings.INCLUDE_A_ON_HIGH,
         band_seeds=band_seeds,
+        http_ua_main=settings.HTTP_UA_MAIN,
+        http_ua_vol=settings.HTTP_UA_VOL,
     )
 
     async def _price_provider() -> Optional[float]:

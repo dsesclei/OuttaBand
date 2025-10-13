@@ -1250,6 +1250,3 @@ class TelegramSvc:
         if self._repo is None:
             raise RuntimeError("Telegram service repository not set. Call start() first.")
         return self._repo
-
-
-telegramsvc = TelegramSvc

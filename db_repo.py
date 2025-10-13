@@ -330,5 +330,3 @@ class DBRepo:
             math.isclose(current[0], target[0], rel_tol=rel_tol, abs_tol=abs_tol)
             and math.isclose(current[1], target[1], rel_tol=rel_tol, abs_tol=abs_tol)
         )
-
-dbrepo = DBRepo

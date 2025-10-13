@@ -27,7 +27,7 @@ import net
 
 log = structlog.get_logger("volatility")
 
-DEFAULT_BASE_URL = "https://api.binance.us"
+DEFAULT_BASE_URL = "https://api.binance.com"
 DEFAULT_SYMBOL = "SOLUSDT"
 DEFAULT_LIMIT = 120
 DEFAULT_CACHE_TTL = 60
@@ -35,9 +35,8 @@ DEFAULT_MAX_STALE = 7200
 
 MAX_FETCH_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 0.5
-REQUEST_USER_AGENT = "lpbot-volatility/0.1 (+https://github.com/dave/lpbot)"
+DEFAULT_USER_AGENT = "lpbot-volatility/0.1 (+https://github.com/dave/lpbot)"
 REQUEST_TIMEOUT = httpx.Timeout(7.5, connect=5.0, read=7.5, write=7.5, pool=5.0)
-REQUEST_HEADERS = {"user-agent": REQUEST_USER_AGENT}
 
 
 @dataclass
@@ -64,6 +63,7 @@ async def fetch_sigma_1h(
     limit: int = DEFAULT_LIMIT,
     cache_ttl: int = DEFAULT_CACHE_TTL,
     max_stale: int = DEFAULT_MAX_STALE,
+    user_agent: Optional[str] = None,
 ) -> Optional[VolReading]:
     """Fetch 1-hour realized volatility for the given market.
 
@@ -87,6 +87,7 @@ async def fetch_sigma_1h(
         base_url=base_url,
         symbol=symbol,
         limit=limit,
+        user_agent=user_agent,
     )
     if payload is None:
         return await _return_stale_if_available(key, max_stale)
@@ -215,16 +216,18 @@ async def _fetch_klines_with_retries(
     base_url: str,
     symbol: str,
     limit: int,
+    user_agent: Optional[str],
 ) -> Optional[Any]:
     url = f"{base_url}/api/v3/klines"
     params = {"symbol": symbol, "interval": "1m", "limit": limit}
+    ua = user_agent or DEFAULT_USER_AGENT
 
     try:
         response = await net.request_with_retries(
             client,
             "GET",
             url,
-            headers=REQUEST_HEADERS,
+            headers={"user-agent": ua},
             params=params,
             attempts=MAX_FETCH_ATTEMPTS,
             base_backoff=BACKOFF_BASE_SECONDS,
@@ -235,6 +238,7 @@ async def _fetch_klines_with_retries(
             "klines_fetch_failed",
             url=url,
             attempts=MAX_FETCH_ATTEMPTS,
+            user_agent=ua,
             err=str(exc),
         )
         return None
