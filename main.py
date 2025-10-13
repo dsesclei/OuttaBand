@@ -19,6 +19,7 @@ import httpx
 import structlog
 from structlog.typing import FilteringBoundLogger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -89,6 +90,11 @@ settings = Settings()
 local_tz = ZoneInfo(settings.LOCAL_TZ)
 
 SLOT_SECONDS = max(60, settings.CHECK_EVERY_MINUTES * 60)
+
+last_run_ts_check: Optional[int] = None
+last_run_ts_daily: Optional[int] = None
+next_run_ts_check: Optional[int] = None
+next_run_ts_daily: Optional[int] = None
 
 
 def floor_to_slot(ts: int) -> int:
@@ -383,9 +389,13 @@ async def get_sigma_reading() -> Optional[Dict[str, Any]]:
 # ----------------------------
 
 async def check_once() -> None:
+    global last_run_ts_check, next_run_ts_check
     assert http_client is not None, "http client not initialized"
     assert repo is not None, "db repo not initialized"
     assert tg is not None, "telegram service not initialized"
+
+    started_ts = int(time.time())
+    last_run_ts_check = started_ts
 
     try:
         price = await decide_price(http_client)
@@ -442,9 +452,22 @@ async def check_once() -> None:
         )
     except Exception as e:
         log.error("job_exception", err=str(e))
+    finally:
+        last_run_ts_check = int(time.time())
+        if scheduler is not None:
+            job = scheduler.get_job("check-once")
+            next_run_ts_check = (
+                int(job.next_run_time.timestamp()) if job and job.next_run_time else None
+            )
+            log.info(
+                "job_next_run",
+                job_id="check-once",
+                next_run_ts=next_run_ts_check,
+            )
 
 
 async def send_daily_advisory() -> None:
+    global last_run_ts_daily, next_run_ts_daily
     assert http_client is not None, "http client not initialized"
     assert tg is not None, "telegram service not initialized"
     assert repo is not None, "db repo not initialized"
@@ -452,6 +475,9 @@ async def send_daily_advisory() -> None:
     if not settings.DAILY_ENABLED:
         log.info("advisory_skip_disabled")
         return
+
+    started_ts = int(time.time())
+    last_run_ts_daily = started_ts
 
     try:
         price = await decide_price(http_client)
@@ -513,6 +539,18 @@ async def send_daily_advisory() -> None:
         )
     except Exception as exc:
         log.error("advisory_failed", err=str(exc))
+    finally:
+        last_run_ts_daily = int(time.time())
+        if scheduler is not None:
+            job = scheduler.get_job("daily-advisory")
+            next_run_ts_daily = (
+                int(job.next_run_time.timestamp()) if job and job.next_run_time else None
+            )
+            log.info(
+                "job_next_run",
+                job_id="daily-advisory",
+                next_run_ts=next_run_ts_daily,
+            )
 
 
 # ----------------------------
@@ -548,19 +586,7 @@ async def lifespan(app: FastAPI):
         if value is not None
     }
     interval_minutes = max(1, settings.CHECK_EVERY_MINUTES)
-    if 60 % interval_minutes == 0:
-        minutes_str = ",".join(
-            str(minute) for minute in range(0, 60, interval_minutes)
-        )
-        slot_seconds = max(60, interval_minutes * 60)
-    else:
-        minutes_str = "0,15,30,45"
-        slot_seconds = 15 * 60
-        log.warning(
-            "non_divisor_interval",
-            interval=settings.CHECK_EVERY_MINUTES,
-            using=minutes_str,
-        )
+    slot_seconds = max(60, interval_minutes * 60)
 
     global SLOT_SECONDS
     SLOT_SECONDS = slot_seconds
@@ -588,20 +614,39 @@ async def lifespan(app: FastAPI):
 
     # scheduler with explicit timezone and sane semantics
     scheduler = AsyncIOScheduler(timezone=local_tz)
-    scheduler.add_job(
-        check_once,
-        "cron",
-        minute=minutes_str,
-        second=0,
-        timezone=local_tz,
-        coalesce=True,
-        max_instances=1,
-        misfire_grace_time=120,
-    )
+    check_job_id = "check-once"
+    if 60 % interval_minutes == 0:
+        minutes_str = ",".join(
+            str(minute) for minute in range(0, 60, interval_minutes)
+        )
+        scheduler.add_job(
+            check_once,
+            "cron",
+            id=check_job_id,
+            minute=minutes_str,
+            second=0,
+            timezone=local_tz,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=120,
+        )
+        check_trigger_desc = f"cron:{minutes_str}"
+    else:
+        interval_seconds = interval_minutes * 60
+        scheduler.add_job(
+            check_once,
+            IntervalTrigger(seconds=interval_seconds, timezone=local_tz),
+            id=check_job_id,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=120,
+        )
+        check_trigger_desc = f"interval:{interval_seconds}s"
     if settings.DAILY_ENABLED:
         scheduler.add_job(
             send_daily_advisory,
             "cron",
+            id="daily-advisory",
             hour=settings.DAILY_LOCAL_HOUR,
             minute=settings.DAILY_LOCAL_MINUTE,
             timezone=local_tz,
@@ -611,10 +656,32 @@ async def lifespan(app: FastAPI):
             max_instances=1,
         )
     scheduler.start()
+    check_job = scheduler.get_job(check_job_id)
+    daily_job = scheduler.get_job("daily-advisory") if settings.DAILY_ENABLED else None
+    global next_run_ts_check, next_run_ts_daily
+    next_run_ts_check = (
+        int(check_job.next_run_time.timestamp()) if check_job and check_job.next_run_time else None
+    )
+    next_run_ts_daily = (
+        int(daily_job.next_run_time.timestamp()) if daily_job and daily_job.next_run_time else None
+    )
+    if check_job:
+        log.info(
+            "job_next_run",
+            job_id=check_job.id,
+            next_run_ts=next_run_ts_check,
+        )
+    if daily_job:
+        log.info(
+            "job_next_run",
+            job_id=daily_job.id,
+            next_run_ts=next_run_ts_daily,
+        )
     log.info(
         "app_start",
         interval_min=settings.CHECK_EVERY_MINUTES,
-        schedule_minutes=minutes_str,
+        check_trigger=check_trigger_desc,
+        slot_seconds=SLOT_SECONDS,
         tz=settings.LOCAL_TZ,
         daily_hour=settings.DAILY_LOCAL_HOUR,
         daily_minute=settings.DAILY_LOCAL_MINUTE,
