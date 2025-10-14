@@ -161,7 +161,7 @@ def test_floor_to_slot_quantizes_correctly() -> None:
 async def test_check_once_skips_on_missing_or_invalid_price(
     default_ctx: tuple[AppContext, FakeRepo, FakeTG],
 ) -> None:
-    ctx, repo, tg = default_ctx
+    ctx, _repo, tg = default_ctx
     ctx.price = FakePrice(None)
     await check_once(ctx, now_ts=1_000)
     assert not tg.breaches
@@ -231,7 +231,7 @@ async def test_check_once_bucket_from_sigma_and_include_a_flag() -> None:
 
 @pytest.mark.asyncio
 async def test_check_once_no_breach_logs(default_ctx: tuple[AppContext, FakeRepo, FakeTG]) -> None:
-    ctx, repo, tg = default_ctx
+    ctx, _repo, tg = default_ctx
     ctx.price = FakePrice(107.0)
     await check_once(ctx, now_ts=600)
     assert not tg.breaches

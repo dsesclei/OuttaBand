@@ -125,9 +125,12 @@ async def fetch_sigma_1h(
     fetched_at = time.time()
     async with _cache_lock:
         current = _cache.get(key)
-        if current and (observed_ts is None or current[1] != observed_ts):
-            if current[1] >= fetched_at:
-                return replace(current[0], stale=False)
+        if (
+            current
+            and (observed_ts is None or current[1] != observed_ts)
+            and current[1] >= fetched_at
+        ):
+            return replace(current[0], stale=False)
         _cache[key] = (reading, fetched_at)
         return reading
 

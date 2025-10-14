@@ -1,6 +1,8 @@
 # main.py
 from __future__ import annotations
 
+from contextlib import suppress
+
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -12,10 +14,8 @@ log = configure_logging().bind(module="main")
 app = FastAPI()
 
 # install metrics
-try:
+with suppress(Exception):
     Instrumentator().instrument(app).expose(app, include_in_schema=False, endpoint="/metrics")
-except Exception:
-    pass
 
 
 @app.on_event("startup")

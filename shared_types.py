@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, NamedTuple, TypedDict, Union
+from typing import Literal, NamedTuple, TypedDict
 
 # Core literals / atoms
 BandName = Literal["a", "b", "c"]
@@ -54,7 +54,7 @@ class AlertPayload(NamedTuple):
 
 
 AdvPayload = BandMap
-PendingPayload = Union[AlertPayload, AdvPayload]
+PendingPayload = AlertPayload | AdvPayload
 
 __all__ = [
     "BAND_ORDER",

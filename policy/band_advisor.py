@@ -129,10 +129,7 @@ def compute_amounts(
     total_pct = sum(split_map.values())
     skipped_pct = max(total_pct - total_present_pct, 0)
 
-    if redistribute_skipped and total_present_pct:
-        scale = total_pct / total_present_pct
-    else:
-        scale = 1.0
+    scale = total_pct / total_present_pct if redistribute_skipped and total_present_pct else 1.0
 
     amounts: AmountsMap = {}
     for band in present:

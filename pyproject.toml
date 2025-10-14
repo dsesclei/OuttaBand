@@ -33,6 +33,7 @@ line-length = 100
 target-version = "py311"
 lint.select = ["E","F","I","UP","B","PIE","PYI","Q","RUF","SIM"]
 lint.ignore = ["E501"]
+lint.allowed-confusables = ["–", "σ"]
 exclude = ["tests/__pycache__"]
 
 [tool.ruff.format]
