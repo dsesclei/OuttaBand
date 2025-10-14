@@ -11,7 +11,7 @@ from db_repo import DBRepo
 from shared_types import BandMap, Bucket, Side
 from sources import PriceSource, VolSource
 from structlog.typing import FilteringBoundLogger
-from telegram.app import TelegramApp
+from telegram import TelegramApp
 
 
 @dataclass(slots=True)
@@ -96,20 +96,8 @@ async def check_once(ctx: AppContext, *, now_ts: int | None = None) -> None:
     )
 
     sent = 0
-    warned_bucket = False
     for suggestion in suggestions:
         side: Side = suggestion.side
-
-        if sigma is None and not warned_bucket:
-            ctx.log.warning(
-                "bucket_missing",
-                band=suggestion.band,
-                side=side,
-                fallback="mid",
-                include_a_on_high=ctx.job.include_a_on_high,
-                source=ctx.job.price_label,
-            )
-            warned_bucket = True
 
         last = await ctx.repo.get_last_alert(suggestion.band, side)
         last_aligned = floor_to_slot(last, slot_seconds) if last is not None else None

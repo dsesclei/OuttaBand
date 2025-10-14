@@ -26,7 +26,6 @@ from structlog.typing import FilteringBoundLogger
 import jobs
 import volatility as vol
 from db_repo import DBRepo
-from shared_types import BAND_ORDER
 from sources import BinanceVolSource, MeteoraPriceSource
 from telegram import TelegramApp
 
@@ -243,8 +242,9 @@ async def lifespan(app: FastAPI):
         user_agent=settings.HTTP_UA_VOL,
     )
 
-    tg.set_price_provider(price_src.read)
-    tg.set_sigma_provider(vol_src.read)
+    if settings.TELEGRAM_ENABLED:
+        tg.set_price_provider(price_src.read)
+        tg.set_sigma_provider(vol_src.read)
 
     SLOT_SECONDS = max(60, settings.CHECK_EVERY_MINUTES * 60)
     log.info("cooldown_quantization", slot_seconds=SLOT_SECONDS)
