@@ -30,7 +30,9 @@ def test_parse_retry_after_http_date() -> None:
 
 
 def test_parse_retry_after_missing() -> None:
-    response = httpx.Response(200, headers={}, request=httpx.Request("GET", "https://example.invalid"))
+    response = httpx.Response(
+        200, headers={}, request=httpx.Request("GET", "https://example.invalid")
+    )
     assert net.parse_retry_after(response) is None
 
 
@@ -111,7 +113,9 @@ async def test_request_with_retries_validates_args() -> None:
         with pytest.raises(ValueError):
             await net.request_with_retries(client, "GET", "https://example.invalid", attempts=0)
         with pytest.raises(ValueError):
-            await net.request_with_retries(client, "GET", "https://example.invalid", base_backoff=0.0)
+            await net.request_with_retries(
+                client, "GET", "https://example.invalid", base_backoff=0.0
+            )
 
 
 @pytest.mark.asyncio

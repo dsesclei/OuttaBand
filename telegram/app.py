@@ -8,9 +8,10 @@ from contextlib import suppress
 from html import escape
 from typing import Any, cast
 
-from policy.band_advisor import compute_amounts, split_for_bucket
 from band_logic import fmt_range
 from db_repo import DBRepo
+from policy import VolReading
+from policy.band_advisor import compute_amounts, split_for_bucket
 from shared_types import (
     BAND_ORDER,
     AdvisoryPayload,
@@ -32,13 +33,11 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from policy import VolReading
 
 from .callbacks import AdvAction, AlertAction, BandsAction, decode, encode
 from .handlers import BotCtx, Handlers, Providers
 from .pending import PendingStore
 from .render import adv_kb, advisory_text, alert_kb, bands_menu_kb, bands_menu_text
-
 
 # ---------- Constants ----------
 
@@ -150,7 +149,9 @@ class TelegramApp:
     async def send_text(self, text: str) -> None:
         await self._send(text, None)
 
-    async def send_advisory_card(self, advisory: AdvisoryPayload, drift_line: str | None = None) -> None:
+    async def send_advisory_card(
+        self, advisory: AdvisoryPayload, drift_line: str | None = None
+    ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
         repo = self._ensure_repo()
@@ -231,7 +232,10 @@ class TelegramApp:
         except ValueError:
             split = None
         if split and notional and price > 0 and math.isfinite(price):
-            pct = next((share for name, share in zip(BAND_ORDER, split, strict=False) if name == band), None)
+            pct = next(
+                (share for name, share in zip(BAND_ORDER, split, strict=False) if name == band),
+                None,
+            )
             if pct and pct > 0:
                 per_band_usd = (notional * pct) / 100.0
                 tilt = min(max(tilt_sol_frac, 0.0), 1.0)
@@ -321,7 +325,9 @@ class TelegramApp:
                 if not (math.isfinite(low) and math.isfinite(high) and low < high):
                     raise ValueError
             except ValueError:
-                await self._send(f"{TAG_INVALID} Expected two numbers: <code>{PROMPT_LOW_HIGH}</code>.", None)
+                await self._send(
+                    f"{TAG_INVALID} Expected two numbers: <code>{PROMPT_LOW_HIGH}</code>.", None
+                )
                 return
             band = state.get(CHATKEY_BAND)
             mid = state.get(CHATKEY_MID)
@@ -330,7 +336,9 @@ class TelegramApp:
                 return
             await self._ensure_repo().upsert_band(band, low, high)
             if isinstance(mid, int):
-                await self._edit_by_id(mid, f"{TAG_APPLIED} {escape(band.upper())} → {fmt_range(low, high)}")
+                await self._edit_by_id(
+                    mid, f"{TAG_APPLIED} {escape(band.upper())} → {fmt_range(low, high)}"
+                )
             bands = await self._ensure_repo().get_bands()
             await self._send(bands_menu_text(bands), bands_menu_kb())
             context.chat_data.pop(CHATKEY_AWAIT_EXACT, None)
@@ -365,7 +373,13 @@ class TelegramApp:
                         f"Send <code>{PROMPT_LOW_HIGH}</code> or tap {LABEL_BACK}."
                     )
                     back_markup = InlineKeyboardMarkup(
-                        [[InlineKeyboardButton(LABEL_BACK, callback_data=encode(BandsAction(a=BANDS_ACT_BACK)))]]
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    LABEL_BACK, callback_data=encode(BandsAction(a=BANDS_ACT_BACK))
+                                )
+                            ]
+                        ]
                     )
                     await self._edit_or_send(query, text, back_markup)
                     mid = query.message.message_id if query.message else None
@@ -379,14 +393,18 @@ class TelegramApp:
             if isinstance(payload, AlertAction):
                 pending = self._pending.pop(PENDING_KIND_ALERT, payload.t)
                 if not pending:
-                    await query.answer(f"{TAG_STALE} This alert is no longer active.", show_alert=True)
+                    await query.answer(
+                        f"{TAG_STALE} This alert is no longer active.", show_alert=True
+                    )
                     return
                 pend_payload = pending.payload
                 if not isinstance(pend_payload, AlertPayload):
                     await query.answer(f"{TAG_ERROR} Malformed alert payload.", show_alert=True)
                     return
                 if pend_payload.band != payload.band:
-                    await query.answer(f"{TAG_STALE} This alert is no longer active.", show_alert=True)
+                    await query.answer(
+                        f"{TAG_STALE} This alert is no longer active.", show_alert=True
+                    )
                     return
                 rng = pend_payload.suggested_range
                 await query.answer()
@@ -395,8 +413,12 @@ class TelegramApp:
                     await self._ensure_repo().upsert_band(payload.band, rng[0], rng[1])
                     with suppress(Exception):
                         if self._log:
-                            self._log.info("breach_applied", band=payload.band, low=rng[0], high=rng[1])
-                    await self._edit_or_send(query, f"{TAG_APPLIED} {band_label} → {fmt_range(*rng)}", None)
+                            self._log.info(
+                                "breach_applied", band=payload.band, low=rng[0], high=rng[1]
+                            )
+                    await self._edit_or_send(
+                        query, f"{TAG_APPLIED} {band_label} → {fmt_range(*rng)}", None
+                    )
                     return
                 if payload.a == ALERT_ACT_IGNORE:
                     await self._edit_or_send(query, TAG_DISMISSED, None)
@@ -420,7 +442,9 @@ class TelegramApp:
             if isinstance(payload, AdvAction):
                 pending = self._pending.pop(PENDING_KIND_ADV, payload.t)
                 if not pending:
-                    await query.answer(f"{TAG_STALE} This advisory is no longer active.", show_alert=True)
+                    await query.answer(
+                        f"{TAG_STALE} This advisory is no longer active.", show_alert=True
+                    )
                     return
                 ranges = cast(AdvPayload, pending.payload)
                 await query.answer()
@@ -439,12 +463,17 @@ class TelegramApp:
                         if self._log:
                             self._log.info(
                                 "advisory_applied",
-                                ranges={name: (rng[0], rng[1]) for name, rng in sorted(filtered.items())},
+                                ranges={
+                                    name: (rng[0], rng[1]) for name, rng in sorted(filtered.items())
+                                },
                             )
                     summary = ", ".join(
-                        f"{escape(name.upper())}→{fmt_range(*rng)}" for name, rng in sorted(filtered.items())
+                        f"{escape(name.upper())}→{fmt_range(*rng)}"
+                        for name, rng in sorted(filtered.items())
                     )
-                    await self._edit_or_send(query, f"{TAG_APPLIED} {summary}" if summary else TAG_APPLIED, None)
+                    await self._edit_or_send(
+                        query, f"{TAG_APPLIED} {summary}" if summary else TAG_APPLIED, None
+                    )
                     return
                 if payload.a == ADV_ACT_IGNORE:
                     await self._edit_or_send(query, TAG_DISMISSED, None)
@@ -462,7 +491,9 @@ class TelegramApp:
         await self._ready.wait()
         await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=reply_markup)
 
-    async def _edit_or_send(self, query: CallbackQuery, text: str, reply_markup: Any | None) -> None:
+    async def _edit_or_send(
+        self, query: CallbackQuery, text: str, reply_markup: Any | None
+    ) -> None:
         try:
             await query.edit_message_text(text, reply_markup=reply_markup)
         except Exception:
@@ -470,7 +501,9 @@ class TelegramApp:
 
     async def _edit_by_id(self, message_id: int, text: str) -> bool:
         try:
-            await self._ensure_app().bot.edit_message_text(chat_id=self._chat_id, message_id=message_id, text=text)
+            await self._ensure_app().bot.edit_message_text(
+                chat_id=self._chat_id, message_id=message_id, text=text
+            )
             return True
         except Exception:
             return False

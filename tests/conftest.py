@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Deque, Iterator
+from typing import Any
 
 import httpx
 import pytest
@@ -33,7 +34,7 @@ def fake_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 def make_mock_transport(*responses: httpx.Response | Exception) -> httpx.MockTransport:
     """Build a transport that replays canned responses or raises errors."""
-    queue: Deque[httpx.Response | Exception] = deque(responses)
+    queue: deque[httpx.Response | Exception] = deque(responses)
 
     def handler(_: httpx.Request) -> httpx.Response:
         if not queue:

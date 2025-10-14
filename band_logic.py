@@ -24,6 +24,7 @@ def fmt_range(lo: float, hi: float) -> str:
 def broken_bands(p: float, bands: BandMap) -> set[BandName]:
     return {name for name, (lo, hi) in bands.items() if p < lo or p > hi}
 
+
 def format_advisory_card(
     price: float,
     sigma_pct: float | None,
@@ -61,9 +62,7 @@ def format_advisory_card(
         line = f"<b>{escape(name.upper())}</b> ({pct_display}): {fmt_range(lo, hi)}"
         if amounts and name in amounts:
             sol_amt, usdc_amt = amounts[name]
-            line = (
-                f"{line} → {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC"
-            )
+            line = f"{line} → {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC"
         lines.append(line)
 
     if unallocated_usd is not None and unallocated_usd > 0.005:

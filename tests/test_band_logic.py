@@ -53,7 +53,9 @@ def test_format_advisory_card_fields() -> None:
     widths, _ = band_advisor.widths_for_bucket(bucket)
     for band, (lo, hi) in ranges.items():
         pct = widths[band] * 100
-        band_line = next(line for line in message.splitlines() if line.startswith(f"<b>{band.upper()}</b>"))
+        band_line = next(
+            line for line in message.splitlines() if line.startswith(f"<b>{band.upper()}</b>")
+        )
         assert f"±{pct:.2f}%" in band_line
         assert fmt_range(lo, hi) in band_line
         sol_amt, usdc_amt = amounts[band]

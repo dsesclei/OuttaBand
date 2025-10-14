@@ -1,4 +1,5 @@
 """Orchestration helpers for price checks and advisories."""
+
 from __future__ import annotations
 
 import math
@@ -6,13 +7,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from db_repo import DBRepo
+from structlog.typing import FilteringBoundLogger
+
 import policy.band_advisor as band_advisor
+from db_repo import DBRepo
 from policy import engine as policy_engine
 from policy.vol_sources import VolSource
-from shared_types import BandMap, Bucket, Side
 from price_sources import PriceSource
-from structlog.typing import FilteringBoundLogger
+from shared_types import BandMap, Bucket, Side
 
 
 # Keep jobs orchestration independent from the third-party telegram package so the
@@ -29,11 +31,11 @@ class TGProto(Protocol):
         bands: dict[str, tuple[float, float]],
         suggested_range: tuple[float, float],
         policy_meta: tuple[str, float] | None,
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    async def send_advisory_card(self, advisory: dict[str, Any], drift_line: str | None = None) -> None:
-        ...
+    async def send_advisory_card(
+        self, advisory: dict[str, Any], drift_line: str | None = None
+    ) -> None: ...
 
 
 @dataclass(slots=True)

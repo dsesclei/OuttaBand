@@ -21,9 +21,7 @@ BANDS_UPSERT_SQL: Final = (
     "ON CONFLICT(name) DO UPDATE SET low=excluded.low, high=excluded.high"
 )
 
-_BAND_SPEC_RE: Final = re.compile(
-    r"^\s*([+-]?\d+(?:\.\d+)?)\s*[-:]\s*([+-]?\d+(?:\.\d+)?)\s*$"
-)
+_BAND_SPEC_RE: Final = re.compile(r"^\s*([+-]?\d+(?:\.\d+)?)\s*[-:]\s*([+-]?\d+(?:\.\d+)?)\s*$")
 
 
 class DBRepo:
@@ -230,7 +228,9 @@ class DBRepo:
 
     # ---------- Snapshots ----------
 
-    async def insert_snapshot(self, ts: int, sol: float, usdc: float, price: float, drift: float) -> None:
+    async def insert_snapshot(
+        self, ts: int, sol: float, usdc: float, price: float, drift: float
+    ) -> None:
         async with self._tx():
             await self._conn.execute(
                 "INSERT INTO snapshots(ts, sol, usdc, price, drift) VALUES(?,?,?,?,?)",
@@ -383,7 +383,9 @@ class DBRepo:
                 ) WITHOUT ROWID
                 """
             )
-            async with self._conn.execute("SELECT until_ts FROM locks WHERE name=?", (name,)) as cur:
+            async with self._conn.execute(
+                "SELECT until_ts FROM locks WHERE name=?", (name,)
+            ) as cur:
                 row = await cur.fetchone()
             if row is not None:
                 try:
@@ -443,7 +445,6 @@ class DBRepo:
         rel_tol: float = 1e-9,
         abs_tol: float = 1e-9,
     ) -> bool:
-        return (
-            math.isclose(current[0], target[0], rel_tol=rel_tol, abs_tol=abs_tol)
-            and math.isclose(current[1], target[1], rel_tol=rel_tol, abs_tol=abs_tol)
-        )
+        return math.isclose(
+            current[0], target[0], rel_tol=rel_tol, abs_tol=abs_tol
+        ) and math.isclose(current[1], target[1], rel_tol=rel_tol, abs_tol=abs_tol)

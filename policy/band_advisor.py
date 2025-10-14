@@ -4,6 +4,7 @@ This module centralises the band policy so all features reuse the same
 decisions. It exposes helpers for the bucket → width table, sigma-based split
 recommendations, range building, and simple quantisation.
 """
+
 from __future__ import annotations
 
 import math
@@ -114,7 +115,9 @@ def compute_amounts(
         return cast(AmountsMap, {}), 0.0
 
     tilt = min(max(tilt_sol_frac, 0.0), 1.0)
-    split_map: dict[BandName, int] = {band: pct for band, pct in zip(BAND_ORDER, split, strict=False)}
+    split_map: dict[BandName, int] = {
+        band: pct for band, pct in zip(BAND_ORDER, split, strict=False)
+    }
 
     present: set[BandName] = set(ranges.keys()) if present_bands is None else set(present_bands)
     present &= set(BAND_ORDER)
@@ -139,7 +142,9 @@ def compute_amounts(
         usdc_usd = round(per_band_usd * (1.0 - tilt), usdc_decimals)
         amounts[band] = (sol_amt, usdc_usd)
 
-    unallocated_usd = 0.0 if redistribute_skipped else round((notional_usd * skipped_pct) / 100.0, usdc_decimals)
+    unallocated_usd = (
+        0.0 if redistribute_skipped else round((notional_usd * skipped_pct) / 100.0, usdc_decimals)
+    )
     return amounts, unallocated_usd
 
 

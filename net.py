@@ -1,4 +1,4 @@
-"""Shared network helpers. """
+"""Shared network helpers."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from typing import Any
 import httpx
 
 # Tunables
-DEFAULT_MAX_BACKOFF = 60.0           # Seconds
-DEFAULT_RETRY_AFTER_EPS = 0.10       # Up to +10% multiplicative jitter above Retry-After
+DEFAULT_MAX_BACKOFF = 60.0  # Seconds
+DEFAULT_RETRY_AFTER_EPS = 0.10  # Up to +10% multiplicative jitter above Retry-After
 
 
 def parse_retry_after(response: httpx.Response | None) -> float | None:
@@ -157,9 +157,7 @@ async def request_with_retries(
         except httpx.HTTPStatusError as status_exc:
             response = status_exc.response
             status = response.status_code if response is not None else None
-            should_retry = (
-                status is not None and (status in retry_statuses or 500 <= status < 600)
-            )
+            should_retry = status is not None and (status in retry_statuses or 500 <= status < 600)
             if not should_retry or attempt == attempts:
                 raise
 

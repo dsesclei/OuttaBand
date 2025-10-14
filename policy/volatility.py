@@ -216,9 +216,7 @@ def _extract_closes(payload: Any) -> tuple[list[float], list[int]]:
     return closes, close_times
 
 
-async def _return_stale_if_available(
-    key: tuple[str, str], max_stale: int
-) -> VolReading | None:
+async def _return_stale_if_available(key: tuple[str, str], max_stale: int) -> VolReading | None:
     async with _cache_lock:
         cached = _cache.get(key)
         current_ts = time.time()
@@ -266,9 +264,7 @@ async def _fetch_klines_with_retries(
         return None
 
 
-def _is_fresh(
-    cached: tuple[VolReading, float] | None, current_ts: float, ttl: int
-) -> bool:
+def _is_fresh(cached: tuple[VolReading, float] | None, current_ts: float, ttl: int) -> bool:
     if not cached:
         return False
     if ttl <= 0:

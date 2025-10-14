@@ -7,17 +7,20 @@ from contextlib import suppress
 from html import escape
 from typing import Any
 
-from policy.band_advisor import compute_amounts, ranges_for_price, split_for_sigma
 from db_repo import DBRepo
-from shared_types import BAND_ORDER
 from policy import VolReading
+from policy.band_advisor import compute_amounts, ranges_for_price, split_for_sigma
+from shared_types import BAND_ORDER
 
 from .render import bands_lines, bands_menu_kb, bands_menu_text, drift_summary, sigma_summary
 
 _USAGE_SETBASELINE = "[<i>Usage</i>] <code>/setbaseline &lt;sol&gt; sol &lt;usdc&gt; usdc</code> (e.g. <code>/setbaseline 1.0 sol 200 usdc</code>)"
 _USAGE_UPDATEBAL = "[<i>Usage</i>] <code>/updatebalances &lt;sol&gt; sol &lt;usdc&gt; usdc</code> (e.g. <code>/updatebalances 1.0 sol 200 usdc</code>)"
-_USAGE_SETNOTIONAL = "[<i>Usage</i>] <code>/setnotional &lt;usd&gt;</code> (e.g. <code>/setnotional 2500</code>)"
+_USAGE_SETNOTIONAL = (
+    "[<i>Usage</i>] <code>/setnotional &lt;usd&gt;</code> (e.g. <code>/setnotional 2500</code>)"
+)
 _USAGE_SETTILT = "[<i>Usage</i>] <code>/settilt &lt;sol&gt;:&lt;usdc&gt;</code> (e.g. <code>/settilt 60:40</code> or <code>/settilt 0.6</code>)"
+
 
 class BotCtx:
     """Minimal façade for sending or editing messages via TelegramApp."""
@@ -59,7 +62,9 @@ class Handlers:
         return min(1.0, max(0.0, val))
 
     @staticmethod
-    def _extract_numbers(text: str, count: int, *, ignore_labels: set[str] | None = None) -> list[float]:
+    def _extract_numbers(
+        text: str, count: int, *, ignore_labels: set[str] | None = None
+    ) -> list[float]:
         labels = {label.lower() for label in (ignore_labels or set())}
         tokens = text.replace(":", " ").replace("/", " ").replace(",", " ").split()
         numbers: list[float] = []
@@ -145,7 +150,11 @@ class Handlers:
         baseline = await repo.get_baseline()
 
         lines: list[str] = []
-        lines.append(f"<b>Price</b>: {price:.2f}" if (price and math.isfinite(price)) else "<b>Price</b>: Unknown")
+        lines.append(
+            f"<b>Price</b>: {price:.2f}"
+            if (price and math.isfinite(price))
+            else "<b>Price</b>: Unknown"
+        )
 
         sigma_line, bucket, sigma_pct = sigma_summary(sigma)
         lines.append(sigma_line)
@@ -154,14 +163,18 @@ class Handlers:
         lines.extend(bands_lines(bands))
 
         split = split_for_sigma(sigma_pct)
-        lines.append(f"<b>Advisory Split</b>: {split[0]}/{split[1]}/{split[2]} ({escape(bucket.title())})")
+        lines.append(
+            f"<b>Advisory Split</b>: {split[0]}/{split[1]}/{split[2]} ({escape(bucket.title())})"
+        )
 
         notional = await repo.get_notional_usd()
         tilt_sol_frac = await repo.get_tilt_sol_frac()
         sol_pct = self._pct_str(tilt_sol_frac)
         usdc_pct = self._pct_str(1.0 - tilt_sol_frac)
         notional_display = "unset" if not (notional and notional > 0) else f"${notional:.2f}"
-        lines.append(f"notional: {escape(notional_display)} | tilt sol/usdc: {escape(sol_pct)}/{escape(usdc_pct)}")
+        lines.append(
+            f"notional: {escape(notional_display)} | tilt sol/usdc: {escape(sol_pct)}/{escape(usdc_pct)}"
+        )
 
         if latest:
             _snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
@@ -174,11 +187,15 @@ class Handlers:
             with suppress(ValueError):
                 planned = ranges_for_price(price, bucket or "mid", include_a_on_high=False)
             if planned:
-                amounts_map, unallocated = compute_amounts(price, split, planned, notional, tilt_sol_frac)
+                amounts_map, unallocated = compute_amounts(
+                    price, split, planned, notional, tilt_sol_frac
+                )
                 for band in BAND_ORDER:
                     if band in amounts_map:
                         sol_amt, usdc_amt = amounts_map[band]
-                        lines.append(f"{band.upper()} amount: {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC")
+                        lines.append(
+                            f"{band.upper()} amount: {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC"
+                        )
                 if unallocated > 0.005:
                     lines.append(f"unallocated: ${unallocated:.2f}")
 
@@ -226,7 +243,9 @@ class Handlers:
 
         baseline = await self.repo.get_baseline()
         if baseline is None:
-            await bctx.send("[<i>Error</i>] Baseline not set. Run <code>/setbaseline</code> first.", None)
+            await bctx.send(
+                "[<i>Error</i>] Baseline not set. Run <code>/setbaseline</code> first.", None
+            )
             return
 
         base_sol, base_usdc, _ = baseline

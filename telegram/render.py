@@ -3,9 +3,9 @@ from __future__ import annotations
 from html import escape
 
 from band_logic import fmt_range, format_advisory_card
+from policy import VolReading
 from shared_types import BAND_ORDER, AmountsMap, BandMap, BandName, Bucket, BucketSplit
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from policy import VolReading
 
 
 def sigma_summary(sigma: VolReading | None) -> tuple[str, Bucket, float | None]:
@@ -75,9 +75,15 @@ def adv_kb(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Apply All", callback_data=encode(AdvAction(a="apply", t=token))),
-                InlineKeyboardButton("Set Exact", callback_data=encode(AdvAction(a="set", t=token))),
-                InlineKeyboardButton("Ignore", callback_data=encode(AdvAction(a="ignore", t=token))),
+                InlineKeyboardButton(
+                    "Apply All", callback_data=encode(AdvAction(a="apply", t=token))
+                ),
+                InlineKeyboardButton(
+                    "Set Exact", callback_data=encode(AdvAction(a="set", t=token))
+                ),
+                InlineKeyboardButton(
+                    "Ignore", callback_data=encode(AdvAction(a="ignore", t=token))
+                ),
             ]
         ]
     )
@@ -89,9 +95,15 @@ def alert_kb(band: BandName, token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [
-                InlineKeyboardButton("Apply", callback_data=encode(AlertAction(a="accept", band=band, t=token))),
-                InlineKeyboardButton("Ignore", callback_data=encode(AlertAction(a="ignore", band=band, t=token))),
-                InlineKeyboardButton("Set Exact", callback_data=encode(AlertAction(a="set", band=band, t=token))),
+                InlineKeyboardButton(
+                    "Apply", callback_data=encode(AlertAction(a="accept", band=band, t=token))
+                ),
+                InlineKeyboardButton(
+                    "Ignore", callback_data=encode(AlertAction(a="ignore", band=band, t=token))
+                ),
+                InlineKeyboardButton(
+                    "Set Exact", callback_data=encode(AlertAction(a="set", band=band, t=token))
+                ),
             ]
         ]
     )
@@ -101,7 +113,8 @@ def bands_menu_text(bands: BandMap) -> str:
     if not bands:
         return "(No bands configured)"
     return "\n".join(
-        ["<b>Configured Bands</b>:"] + [f"{escape(name.upper())}: {fmt_range(*rng)}" for name, rng in sorted(bands.items())]
+        ["<b>Configured Bands</b>:"]
+        + [f"{escape(name.upper())}: {fmt_range(*rng)}" for name, rng in sorted(bands.items())]
     )
 
 
@@ -109,7 +122,11 @@ def bands_menu_kb() -> InlineKeyboardMarkup:
     from .callbacks import BandsAction, encode
 
     buttons = [
-        [InlineKeyboardButton(f"Edit {band.upper()}", callback_data=encode(BandsAction(a="edit", band=band)))]
+        [
+            InlineKeyboardButton(
+                f"Edit {band.upper()}", callback_data=encode(BandsAction(a="edit", band=band))
+            )
+        ]
         for band in BAND_ORDER
     ]
     buttons.append([InlineKeyboardButton("Back", callback_data=encode(BandsAction(a="back")))])

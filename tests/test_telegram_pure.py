@@ -336,7 +336,10 @@ async def test_cmd_updatebalances_requires_price_and_baseline_then_records_snaps
 
     handlers_baseline_missing = make_handlers(repo, price=100.0)
     await handlers_baseline_missing.cmd_updatebalances(bot, "/updatebalances 1 sol 2 usdc")
-    assert capture.messages[-1][0] == "[<i>Error</i>] Baseline not set. Run <code>/setbaseline</code> first."
+    assert (
+        capture.messages[-1][0]
+        == "[<i>Error</i>] Baseline not set. Run <code>/setbaseline</code> first."
+    )
     assert repo.snapshot is None
 
     repo.baseline = Baseline(1.0, 2.0, 10)

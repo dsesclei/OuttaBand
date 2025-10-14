@@ -123,7 +123,9 @@ async def test_fetch_sigma_1h_returns_stale_on_failure(
     payload = _make_kline_payload()
 
     now_time(monkeypatch, 1_000.0)
-    async with httpx.AsyncClient(transport=make_mock_transport(json_response(json=payload))) as client:
+    async with httpx.AsyncClient(
+        transport=make_mock_transport(json_response(json=payload))
+    ) as client:
         fresh = await volatility.fetch_sigma_1h(
             client,
             base_url=base_url,
@@ -161,7 +163,9 @@ async def test_get_cache_age(monkeypatch: pytest.MonkeyPatch) -> None:
     assert await volatility.get_cache_age(base_url, symbol) is None
 
     payload = _make_kline_payload()
-    async with httpx.AsyncClient(transport=make_mock_transport(json_response(json=payload))) as client:
+    async with httpx.AsyncClient(
+        transport=make_mock_transport(json_response(json=payload))
+    ) as client:
         reading = await volatility.fetch_sigma_1h(
             client,
             base_url=base_url,
@@ -191,7 +195,9 @@ async def test_fetch_sigma_1h_handles_http_failures(monkeypatch: pytest.MonkeyPa
     now_time(monkeypatch, 10_000.0)
 
     async with httpx.AsyncClient() as client:
-        result = await volatility.fetch_sigma_1h(client, base_url="http://example.invalid", symbol="SOLUSDT")
+        result = await volatility.fetch_sigma_1h(
+            client, base_url="http://example.invalid", symbol="SOLUSDT"
+        )
         assert result is None
 
 
@@ -201,7 +207,9 @@ async def test_fetch_sigma_1h_sets_as_of_ts(monkeypatch: pytest.MonkeyPatch) -> 
     close_times = [entry[6] for entry in payload]
 
     now_time(monkeypatch, 1_000.0)
-    async with httpx.AsyncClient(transport=make_mock_transport(json_response(json=payload))) as client:
+    async with httpx.AsyncClient(
+        transport=make_mock_transport(json_response(json=payload))
+    ) as client:
         reading = await volatility.fetch_sigma_1h(
             client,
             base_url="http://example.invalid/as-of",

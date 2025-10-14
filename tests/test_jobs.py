@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
 import policy.band_advisor as band_advisor
 from jobs import AppContext, JobSettings, check_once, floor_to_slot, send_daily_advisory
 from policy.volatility import VolReading
@@ -52,7 +53,9 @@ class FakeRepo:
     async def get_latest_snapshot(self) -> Snapshot | None:
         return self.snapshot
 
-    async def insert_snapshot(self, ts: int, sol: float, usdc: float, price: float, drift: float) -> None:
+    async def insert_snapshot(
+        self, ts: int, sol: float, usdc: float, price: float, drift: float
+    ) -> None:
         self.snapshot = Snapshot(ts, sol, usdc, price, drift)
 
     async def get_notional_usd(self) -> float | None:
@@ -93,7 +96,9 @@ class FakeTG:
             }
         )
 
-    async def send_advisory_card(self, advisory: AdvisoryPayload, drift_line: str | None = None) -> None:
+    async def send_advisory_card(
+        self, advisory: AdvisoryPayload, drift_line: str | None = None
+    ) -> None:
         self.advisories.append({"advisory": advisory, "drift_line": drift_line})
 
 
@@ -121,7 +126,7 @@ class CaptureLog:
     def __init__(self) -> None:
         self.records: list[tuple[str, dict[str, Any]]] = []
 
-    def bind(self, **kwargs: Any) -> "CaptureLog":
+    def bind(self, **kwargs: Any) -> CaptureLog:
         return self
 
     def info(self, event: str, **kwargs: Any) -> None:
@@ -153,7 +158,9 @@ def test_floor_to_slot_quantizes_correctly() -> None:
 
 
 @pytest.mark.asyncio
-async def test_check_once_skips_on_missing_or_invalid_price(default_ctx: tuple[AppContext, FakeRepo, FakeTG]) -> None:
+async def test_check_once_skips_on_missing_or_invalid_price(
+    default_ctx: tuple[AppContext, FakeRepo, FakeTG],
+) -> None:
     ctx, repo, tg = default_ctx
     ctx.price = FakePrice(None)
     await check_once(ctx, now_ts=1_000)
@@ -169,7 +176,9 @@ async def test_check_once_skips_on_missing_or_invalid_price(default_ctx: tuple[A
 
 
 @pytest.mark.asyncio
-async def test_check_once_generates_breach_and_enforces_cooldown(default_ctx: tuple[AppContext, FakeRepo, FakeTG]) -> None:
+async def test_check_once_generates_breach_and_enforces_cooldown(
+    default_ctx: tuple[AppContext, FakeRepo, FakeTG],
+) -> None:
     ctx, repo, tg = default_ctx
     ctx.job.cooldown_minutes = 5
     ctx.job.check_every_minutes = 1
@@ -230,7 +239,9 @@ async def test_check_once_no_breach_logs(default_ctx: tuple[AppContext, FakeRepo
 
 
 @pytest.mark.asyncio
-async def test_send_daily_advisory_includes_amounts_and_drift(default_ctx: tuple[AppContext, FakeRepo, FakeTG]) -> None:
+async def test_send_daily_advisory_includes_amounts_and_drift(
+    default_ctx: tuple[AppContext, FakeRepo, FakeTG],
+) -> None:
     ctx, repo, tg = default_ctx
 
     # Set prefs for advisory amounts

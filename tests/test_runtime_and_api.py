@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib
 
-import httpx
 import pytest
 
 from config import Settings, configure_logging, tz

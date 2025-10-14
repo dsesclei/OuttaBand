@@ -4,13 +4,14 @@ actionlint:
     uv run actionlint -color
 
 hadolint:
-    docker run --rm -v $(pwd):/work -w /work hadolint/hadolint:latest-debian hadolint Dockerfile
+    docker run --rm -v $(pwd):/work -w /work hadolint/hadolint:latest-debian \
+        hadolint --failure-threshold error Dockerfile
 
 fmt:
     uv run ruff format .
 
 lint:
-    uv run ruff check .
+    uv run ruff check . --fix
 
 type:
     uv run mypy .

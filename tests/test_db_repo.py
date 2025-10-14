@@ -116,9 +116,7 @@ async def test_acquire_lock_first_then_false_until_ttl(
 
 
 @pytest.mark.asyncio
-async def test_ensure_snapshots_schema_creates_when_missing(
-    fake_env, tmp_path: Path
-) -> None:
+async def test_ensure_snapshots_schema_creates_when_missing(fake_env, tmp_path: Path) -> None:
     db_path = tmp_path / "schema.sqlite"
     conn = await aiosqlite.connect(db_path)
     repo = DBRepo(conn, DummyLogger())

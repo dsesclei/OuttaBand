@@ -25,7 +25,7 @@ dev = [
   "hypothesis>=6.112",
   "ruff>=0.7",
   "mypy>=1.11",
-  "actionlint-binary>=1.7.0"
+  "actionlint-py>=1.7.0"
 ]
 
 [tool.ruff]
