@@ -26,3 +26,14 @@ run:
 
 build:
     docker buildx build -t lpbot:dev .
+
+smoke:
+    docker run -d --rm --name lpbot -p 8000:8000 lpbot:dev
+    @for i in {1..30}; do \
+      code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/healthz || true); \
+      [ "$$code" = "200" ] && docker stop lpbot && exit 0; \
+      sleep 1; \
+    done; \
+    echo "healthz never returned 200"; docker logs lpbot; docker stop lpbot; exit 1
+
+ci: check build smoke

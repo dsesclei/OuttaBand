@@ -1,0 +1,8 @@
+services:
+  lpbot:
+    image: lpbot:ci
+    environment:
+      DB_PATH: /tmp/app.db
+      TELEGRAM_ENABLED: "false"
+    ports:
+      - "8000:8000"
