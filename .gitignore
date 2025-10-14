@@ -1,7 +1,7 @@
 __pycache__/
 app.db
 .env
-data/*
+data/
 !data/.gitkeep
 uv.lock
 .hypothesis
