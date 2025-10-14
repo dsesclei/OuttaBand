@@ -12,7 +12,7 @@ from structlog.typing import FilteringBoundLogger
 from shared_types import BAND_ORDER, BandMap, BandName, BandRange, Baseline, Side, Snapshot
 
 if TYPE_CHECKING:  # pragma: no cover - used only for type hints
-    from main import Settings
+    from config import Settings
 
 
 # Constants

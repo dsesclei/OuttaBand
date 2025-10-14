@@ -9,7 +9,7 @@ services:
       LPBOT_LOG_LEVEL: ${LPBOT_LOG_LEVEL:-INFO}
       TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-false}
     volumes:
-      - ./data:/data
+      - lpbot-data:/data
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -21,3 +21,5 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+volumes:
+  lpbot-data:
