@@ -1,0 +1,73 @@
+[project]
+name = "lpbot"
+version = "0.0.0"
+description = "async band watcher with telegram advisories; demo ci/cd & sre sensibilities"
+requires-python = ">=3.11"
+dependencies = [
+  "aiosqlite>=0.20",
+  "apscheduler>=3.10",
+  "fastapi>=0.112",
+  "httpx>=0.27",
+  "prometheus-fastapi-instrumentator>=6.1"
+  "pydantic-settings>=2.3",
+  "pydantic>=2.8",
+  "python-telegram-bot>=21.4",
+  "structlog>=24.1",
+  "uvicorn[standard]>=0.30",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+lint.select = ["E","F","I","UP","B","PIE","PYI","Q","RUF","SIM"]
+lint.ignore = ["E501"]
+exclude = ["tests/__pycache__"]
+
+[tool.ruff.format]
+quote-style = "preserve"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+disallow_any_generics = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+addopts = "-q -ra --disable-warnings"
+testpaths = ["tests"]
+markers = [
+  "slow: potentially long-running",
+  "net: hits network if not mocked"
+]
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = ["tests/*", ".venv/*"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = [
+  "band_advisor",
+  "band_logic",
+  "db_repo",
+  "main",
+  "net",
+  "shared_types",
+  "telegram_service",
+  "volatility",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "*.py",
+  "README.*",
+  "pyproject.toml",
+  "docker-compose.yml",
+  "Dockerfile",
+]
