@@ -48,12 +48,12 @@ jobs:
 
       - name: Probe /healthz
         run: |
-          for i in {1..30}; do
+          for attempt in $(seq 30); do
             code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/healthz || true)
             [ "$code" = "200" ] && exit 0
             sleep 2
           done
-          echo "healthz never returned 200"
+          echo "healthz never returned 200 after ${attempt} attempts"
           docker compose -f docker-compose.ci.yml logs || true
           exit 1
 

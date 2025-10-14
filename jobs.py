@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any
 
 from structlog.typing import FilteringBoundLogger
 
@@ -14,28 +14,7 @@ from db_repo import DBRepo
 from policy import engine as policy_engine
 from policy.vol_sources import VolSource
 from price_sources import PriceSource
-from shared_types import AdvisoryPayload, BandMap, Bucket, Side
-
-
-# Keep jobs orchestration independent from the third-party telegram package so the
-# module stays importable in pure unit tests and other contexts. We document the
-# surface we rely on via a Protocol, letting type-checkers validate real clients
-# while tests can supply minimal fakes.
-class TGProto(Protocol):
-    async def send_breach_offer(
-        self,
-        *,
-        band: str,
-        price: float,
-        src_label: str | None,
-        bands: BandMap,
-        suggested_range: tuple[float, float],
-        policy_meta: tuple[str, float] | None,
-    ) -> None: ...
-
-    async def send_advisory_card(
-        self, advisory: AdvisoryPayload, drift_line: str | None = None
-    ) -> None: ...
+from shared_types import BandMap, Bucket, Side
 
 
 @dataclass(slots=True)
@@ -49,7 +28,7 @@ class JobSettings:
 @dataclass(slots=True)
 class AppContext:
     repo: DBRepo
-    tg: TGProto
+    tg: Any  # Expects send_breach_offer() and send_advisory_card()
     price: PriceSource
     vol: VolSource
     job: JobSettings

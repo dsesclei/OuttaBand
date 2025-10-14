@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import sys
 import types
-from pathlib import Path
 
 import pytest
 
@@ -12,12 +11,9 @@ from shared_types import BAND_ORDER, BandMap, Baseline, PendingKind, Snapshot
 from tests.conftest import Capture, now_time
 from tests.test_jobs import FakeRepo
 
-ROOT = Path(__file__).resolve().parents[1]
-
-# Provide a lightweight telegram package stub so pure helpers can be imported
+# Provide a lightweight telegram (third-party) stub so pure helpers can be imported
 if "telegram" not in sys.modules or not getattr(sys.modules["telegram"], "_lpbot_stub", False):
     telegram_stub = types.ModuleType("telegram")
-    telegram_stub.__path__ = [str(ROOT / "telegram")]
 
     class InlineKeyboardButton:
         def __init__(self, text: str, callback_data: str | None = None) -> None:
@@ -33,10 +29,10 @@ if "telegram" not in sys.modules or not getattr(sys.modules["telegram"], "_lpbot
     telegram_stub._lpbot_stub = True
     sys.modules["telegram"] = telegram_stub
 
-callbacks = importlib.import_module("telegram.callbacks")
-pending = importlib.import_module("telegram.pending")
-render = importlib.import_module("telegram.render")
-handlers_mod = importlib.import_module("telegram.handlers")
+callbacks = importlib.import_module("tgbot.callbacks")
+pending = importlib.import_module("tgbot.pending")
+render = importlib.import_module("tgbot.render")
+handlers_mod = importlib.import_module("tgbot.handlers")
 
 BotCtx = handlers_mod.BotCtx
 Handlers = handlers_mod.Handlers

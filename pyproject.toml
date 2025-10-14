@@ -77,7 +77,7 @@ only-include = [
   "price_sources",
   "runtime",
   "shared_types",
-  "telegram",
+  "tgbot",
 ]
 
 [tool.hatch.build.targets.sdist]

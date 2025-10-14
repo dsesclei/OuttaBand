@@ -22,11 +22,11 @@ from price_sources import MeteoraPriceSource
 DEFAULT_TIMEOUT = httpx.Timeout(7.5, read=7.5, write=7.5, connect=5.0, pool=5.0)
 
 
-def _load_telegram_app() -> type[Any]:
-    module = import_module("telegram.app")
+def _load_tgbot_app() -> type[Any]:
+    module = import_module("tgbot.app")
     telegram_app = getattr(module, "TelegramApp", None)
     if telegram_app is None:
-        raise ImportError("telegram.app.TelegramApp not found")
+        raise ImportError("tgbot.app.TelegramApp not found")
     return cast(type[Any], telegram_app)
 
 
@@ -89,9 +89,9 @@ class Runtime:
 
         self.http = httpx.AsyncClient(http2=False, timeout=DEFAULT_TIMEOUT)
 
-        tg_logger = base_log.bind(module="telegram")
+        tg_logger = base_log.bind(module="tgbot")
         if s.TELEGRAM_ENABLED:
-            TelegramApp = _load_telegram_app()
+            TelegramApp = _load_tgbot_app()
             self.tg = TelegramApp(
                 s.TELEGRAM_BOT_TOKEN or "", int(s.TELEGRAM_CHAT_ID or 0), logger=tg_logger
             )
@@ -119,10 +119,9 @@ class Runtime:
             include_a_on_high=s.INCLUDE_A_ON_HIGH,
             price_label="meteora",
         )
-        tg_client = cast(jobs.TGProto, self.tg)
         self.ctx = jobs.AppContext(
             repo=self.repo,
-            tg=tg_client,
+            tg=self.tg,
             price=price_src,
             vol=vol_src,
             job=job_settings,

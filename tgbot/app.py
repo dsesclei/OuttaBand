@@ -8,22 +8,7 @@ from contextlib import suppress
 from html import escape
 from typing import Any, Final, Literal, cast
 
-from band_logic import fmt_range
-from db_repo import DBRepo
-from policy import VolReading
-from policy.band_advisor import compute_amounts, split_for_bucket
-from shared_types import (
-    BAND_ORDER,
-    AdvisoryPayload,
-    AdvPayload,
-    AlertPayload,
-    BandMap,
-    BandName,
-    BandRange,
-    Bucket,
-    PendingKind,
-)
-from telegram import (  # type: ignore[attr-defined]
+from telegram import (
     CallbackQuery,
     ForceReply,
     InlineKeyboardButton,
@@ -39,6 +24,22 @@ from telegram.ext import (
     Defaults,
     MessageHandler,
     filters,
+)
+
+from band_logic import fmt_range
+from db_repo import DBRepo
+from policy import VolReading
+from policy.band_advisor import compute_amounts, split_for_bucket
+from shared_types import (
+    BAND_ORDER,
+    AdvisoryPayload,
+    AdvPayload,
+    AlertPayload,
+    BandMap,
+    BandName,
+    BandRange,
+    Bucket,
+    PendingKind,
 )
 
 from .callbacks import AdvAction, AlertAction, BandsAction, decode, encode

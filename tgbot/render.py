@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from html import escape
 
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 from band_logic import fmt_range, format_advisory_card
 from policy import VolReading
 from shared_types import BAND_ORDER, AmountsMap, BandMap, BandName, Bucket, BucketSplit
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup  # type: ignore[attr-defined]
 
 
 def sigma_summary(sigma: VolReading | None) -> tuple[str, Bucket, float | None]:
