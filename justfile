@@ -25,7 +25,7 @@ run:
     uv run uvicorn main:app --reload
 
 build:
-    docker buildx build -t lpbot:dev .
+    docker buildx build -t lpbot:local .
 
 smoke:
     docker run -d --rm --name lpbot -p 8000:8000 lpbot:dev
