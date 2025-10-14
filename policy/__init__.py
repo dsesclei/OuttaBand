@@ -8,7 +8,7 @@ from .band_advisor import (
     widths_for_bucket,
 )
 from .engine import BreachSuggestion, compute_breaches, suggest_ranges
-from .sources import BinanceVolSource, VolSource
+from .vol_sources import BinanceVolSource, VolSource
 from .volatility import VolReading, clear_cache, fetch_sigma_1h, get_cache_age
 
 __all__ = [

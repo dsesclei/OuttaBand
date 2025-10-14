@@ -26,7 +26,7 @@ from structlog.typing import FilteringBoundLogger
 import jobs
 from db_repo import DBRepo
 from policy import volatility as vol
-from policy.sources import BinanceVolSource
+from policy.vol_sources import BinanceVolSource
 from shared_types import BAND_ORDER
 from price_sources import MeteoraPriceSource
 from telegram import TelegramApp

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from db_repo import DBRepo
 import policy.band_advisor as band_advisor
 from policy import engine as policy_engine
-from policy.sources import VolSource
+from policy.vol_sources import VolSource
 from shared_types import BandMap, Bucket, Side
 from price_sources import PriceSource
 from structlog.typing import FilteringBoundLogger

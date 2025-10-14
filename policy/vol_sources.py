@@ -9,7 +9,7 @@ import structlog
 
 from . import volatility
 
-log = structlog.get_logger("policy.sources")
+log = structlog.get_logger("policy.vol_sources")
 
 
 class VolSource:
