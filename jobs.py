@@ -6,10 +6,11 @@ import time
 from dataclasses import dataclass
 
 import band_advisor
-from policy import engine as policy_engine
 from db_repo import DBRepo
+from policy import engine as policy_engine
+from policy.sources import VolSource
 from shared_types import BandMap, Bucket, Side
-from sources import PriceSource, VolSource
+from sources import PriceSource
 from structlog.typing import FilteringBoundLogger
 from telegram import TelegramApp
 

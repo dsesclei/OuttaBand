@@ -26,7 +26,8 @@ from structlog.typing import FilteringBoundLogger
 import jobs
 from policy import volatility as vol
 from db_repo import DBRepo
-from sources import BinanceVolSource, MeteoraPriceSource
+from policy.sources import BinanceVolSource
+from sources import MeteoraPriceSource
 from telegram import TelegramApp
 
 # ----------------------------
