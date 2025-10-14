@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
+
+from shared_types import BAND_ORDER, BandName
 
 # Callback kinds
 Kind = Literal["adv", "alert", "bands"]
@@ -20,7 +22,7 @@ class AdvAction:
 @dataclass(frozen=True)
 class AlertAction:
     a: Literal["accept", "ignore", "set"]
-    band: Literal["a", "b", "c"]
+    band: BandName
     t: str
     k: Literal["alert"] = "alert"
 
@@ -28,7 +30,7 @@ class AlertAction:
 @dataclass(frozen=True)
 class BandsAction:
     a: Literal["edit", "back"]
-    band: str | None = None
+    band: BandName | None = None
     k: Literal["bands"] = "bands"
 
 
@@ -38,7 +40,7 @@ class _Envelope(TypedDict, total=False):
     k: Kind
     a: str
     t: str
-    band: str
+    band: BandName
 
 
 VERSION = 1
@@ -68,9 +70,12 @@ def decode(s: str) -> AdvAction | AlertAction | BandsAction | None:
         return AdvAction(a=a, t=data["t"])
     if k == "alert" and a in {"accept", "ignore", "set"} and isinstance(data.get("t"), str):
         band = data.get("band")
-        if band in {"a", "b", "c"}:
-            return AlertAction(a=a, band=band, t=data["t"])
+        if isinstance(band, str) and band in BAND_ORDER:
+            return AlertAction(a=a, band=cast(BandName, band), t=data["t"])
     if k == "bands" and a in {"edit", "back"}:
-        band = data.get("band")
+        band_val = data.get("band")
+        band: BandName | None = None
+        if isinstance(band_val, str) and band_val in BAND_ORDER:
+            band = cast(BandName, band_val)
         return BandsAction(a=a, band=band)
     return None

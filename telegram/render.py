@@ -3,13 +3,13 @@ from __future__ import annotations
 from html import escape
 
 from band_logic import fmt_range, format_advisory_card
-from shared_types import BandMap, Bucket, BucketSplit
+from shared_types import BAND_ORDER, AmountsMap, BandMap, BandName, Bucket, BucketSplit
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from volatility import VolReading
 
 
-def sigma_summary(sigma: VolReading | None) -> tuple[str, str, float | None]:
-    bucket = sigma.bucket if sigma else "mid"
+def sigma_summary(sigma: VolReading | None) -> tuple[str, Bucket, float | None]:
+    bucket: Bucket = sigma.bucket if sigma else "mid"
     label = escape(bucket.title())
     pct = float(sigma.sigma_pct) if sigma and sigma.sigma_pct is not None else None
     display = f"{pct:.2f}%" if pct is not None else "–"
@@ -31,7 +31,7 @@ def advisory_text(
     split: BucketSplit,
     *,
     stale: bool = False,
-    amounts=None,
+    amounts: AmountsMap | None = None,
     unallocated_usd: float | None = None,
 ) -> str:
     return format_advisory_card(
@@ -83,7 +83,7 @@ def adv_kb(token: str) -> InlineKeyboardMarkup:
     )
 
 
-def alert_kb(band: str, token: str) -> InlineKeyboardMarkup:
+def alert_kb(band: BandName, token: str) -> InlineKeyboardMarkup:
     from .callbacks import AlertAction, encode
 
     return InlineKeyboardMarkup(
@@ -108,7 +108,9 @@ def bands_menu_text(bands: BandMap) -> str:
 def bands_menu_kb() -> InlineKeyboardMarkup:
     from .callbacks import BandsAction, encode
 
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(f"Edit {column}", callback_data=encode(BandsAction(a="edit", band=column.lower())))] for column in "ABC"]
-        + [[InlineKeyboardButton("Back", callback_data=encode(BandsAction(a="back")))]]
-    )
+    buttons = [
+        [InlineKeyboardButton(f"Edit {band.upper()}", callback_data=encode(BandsAction(a="edit", band=band)))]
+        for band in BAND_ORDER
+    ]
+    buttons.append([InlineKeyboardButton("Back", callback_data=encode(BandsAction(a="back")))])
+    return InlineKeyboardMarkup(buttons)

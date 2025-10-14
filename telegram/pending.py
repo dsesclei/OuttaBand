@@ -4,16 +4,15 @@ import secrets
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Literal
 
-Kind = Literal["adv", "alert"]
+from shared_types import PendingKind, PendingPayload
 
 
 @dataclass
 class Pending:
     token: str
-    kind: Kind
-    payload: Any
+    kind: PendingKind
+    payload: PendingPayload
     created_at: float
 
 
@@ -29,14 +28,14 @@ class PendingStore:
     def new_token() -> str:
         return secrets.token_hex(12)
 
-    def put(self, kind: Kind, payload: Any) -> str:
+    def put(self, kind: PendingKind, payload: PendingPayload) -> str:
         # Insert a new pending entry, evicting old ones as needed
         self._evict()
         token = self.new_token()
         self._by_token[token] = Pending(token, kind, payload, time.time())
         return token
 
-    def pop(self, kind: Kind, token: str) -> Pending | None:
+    def pop(self, kind: PendingKind, token: str) -> Pending | None:
         # Remove and return the pending entry if it matches the given kind
         self._evict()
         p = self._by_token.pop(token, None)

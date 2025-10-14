@@ -11,7 +11,16 @@ from typing import Any, cast
 from band_advisor import compute_amounts, split_for_bucket
 from band_logic import fmt_range
 from db_repo import DBRepo
-from shared_types import AdvisoryPayload, BandMap, BandRange
+from shared_types import (
+    BAND_ORDER,
+    AdvisoryPayload,
+    AdvPayload,
+    AlertPayload,
+    BandMap,
+    BandName,
+    BandRange,
+    Bucket,
+)
 from telegram import CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -32,7 +41,7 @@ from .render import adv_kb, advisory_text, alert_kb, bands_menu_kb, bands_menu_t
 
 
 class TelegramApp:
-    """Public façade matching the old TelegramSvc surface."""
+    """Public facade matching the old TelegramSvc surface."""
 
     MAX_PENDING = int(os.getenv("LPBOT_PENDING_CAP", "100"))
 
@@ -143,18 +152,19 @@ class TelegramApp:
             text = f"{text}\n{drift_line}"
 
         # Stash pending payload (BandMap) and send
-        token = self._pending.put("adv", dict(ranges))
+        adv_payload: AdvPayload = dict(ranges)
+        token = self._pending.put("adv", adv_payload)
         keyboard = adv_kb(token)
         await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=keyboard)
         
     async def send_breach_offer(
         self,
-        band: str,
+        band: BandName,
         price: float,
         src_label: str | None,
         bands: BandMap,
         suggested_range: BandRange,
-        policy_meta: tuple[str, float] | None = None,
+        policy_meta: tuple[Bucket, float] | None = None,
     ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
@@ -182,12 +192,11 @@ class TelegramApp:
         tilt_sol_frac = await repo.get_tilt_sol_frac()
         amount_line: str | None = None
         try:
-            split = split_for_bucket(policy_meta[0]) if policy_meta else None  # type: ignore[index]
+            split = split_for_bucket(policy_meta[0]) if policy_meta else None
         except ValueError:
             split = None
         if split and notional and price > 0 and math.isfinite(price):
-            bands_order = ("a", "b", "c")
-            pct = next((share for name, share in zip(bands_order, split, strict=False) if name == band), None)
+            pct = next((share for name, share in zip(BAND_ORDER, split, strict=False) if name == band), None)
             if pct and pct > 0:
                 per_band_usd = (notional * pct) / 100.0
                 tilt = min(max(tilt_sol_frac, 0.0), 1.0)
@@ -197,7 +206,7 @@ class TelegramApp:
         if amount_line:
             text = f"{text}\n{amount_line}"
 
-        token = self._pending.put("alert", (band, suggested_range))
+        token = self._pending.put("alert", AlertPayload(band, suggested_range))
         keyboard = alert_kb(band, token)
         await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=keyboard)
 
@@ -337,10 +346,14 @@ class TelegramApp:
                 if not pending:
                     await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
                     return
-                pend_band, rng = cast(tuple[str, BandRange], pending.payload)
-                if pend_band != payload.band:
+                pend_payload = pending.payload
+                if not isinstance(pend_payload, AlertPayload):
+                    await query.answer("[<i>Error</i>] Malformed alert payload.", show_alert=True)
+                    return
+                if pend_payload.band != payload.band:
                     await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
                     return
+                rng = pend_payload.suggested_range
                 await query.answer()
                 band_label = escape(payload.band.upper())
                 if payload.a == "accept":
@@ -368,7 +381,7 @@ class TelegramApp:
                 if not pending:
                     await query.answer("[<i>Stale</i>] This advisory is no longer active.", show_alert=True)
                     return
-                ranges = cast(BandMap, pending.payload)
+                ranges = cast(AdvPayload, pending.payload)
                 await query.answer()
                 if payload.a == "apply":
                     try:

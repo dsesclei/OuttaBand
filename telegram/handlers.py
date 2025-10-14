@@ -9,6 +9,7 @@ from typing import Any
 
 from band_advisor import compute_amounts, ranges_for_price, split_for_sigma
 from db_repo import DBRepo
+from shared_types import BAND_ORDER
 from volatility import VolReading
 
 from .render import bands_lines, bands_menu_kb, bands_menu_text, drift_summary, sigma_summary
@@ -174,7 +175,7 @@ class Handlers:
                 planned = ranges_for_price(price, bucket or "mid", include_a_on_high=False)
             if planned:
                 amounts_map, unallocated = compute_amounts(price, split, planned, notional, tilt_sol_frac)
-                for band in ("a", "b", "c"):
+                for band in BAND_ORDER:
                     if band in amounts_map:
                         sol_amt, usdc_amt = amounts_map[band]
                         lines.append(f"{band.upper()} amount: {sol_amt:.6f} SOL / ${usdc_amt:.2f} USDC")
