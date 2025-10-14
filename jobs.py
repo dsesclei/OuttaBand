@@ -10,7 +10,7 @@ import policy.band_advisor as band_advisor
 from policy import engine as policy_engine
 from policy.sources import VolSource
 from shared_types import BandMap, Bucket, Side
-from sources import PriceSource
+from price_sources import PriceSource
 from structlog.typing import FilteringBoundLogger
 from telegram import TelegramApp
 

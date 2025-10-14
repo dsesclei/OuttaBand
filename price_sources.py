@@ -10,7 +10,7 @@ import structlog
 
 import net
 
-log = structlog.get_logger("sources")
+log = structlog.get_logger("price_sources")
 
 
 class PriceSource:

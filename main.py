@@ -28,7 +28,7 @@ from db_repo import DBRepo
 from policy import volatility as vol
 from policy.sources import BinanceVolSource
 from shared_types import BAND_ORDER
-from sources import MeteoraPriceSource
+from price_sources import MeteoraPriceSource
 from telegram import TelegramApp
 
 # ----------------------------
