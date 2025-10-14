@@ -23,6 +23,7 @@ dev = [
   "hypothesis>=6.112",
   "ruff>=0.7",
   "mypy>=1.11",
+  "pre-commit>=3,<4",
 ]
 
 [tool.ruff]
