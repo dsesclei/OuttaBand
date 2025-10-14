@@ -17,8 +17,9 @@ import asyncio
 import math
 import statistics
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any
 
 import httpx
 import structlog
@@ -53,7 +54,7 @@ class VolReading:
 
 
 _cache_lock = asyncio.Lock()
-_cache: Dict[Tuple[str, str], Tuple[VolReading, float]] = {}
+_cache: dict[tuple[str, str], tuple[VolReading, float]] = {}
 
 
 async def fetch_sigma_1h(
@@ -64,8 +65,8 @@ async def fetch_sigma_1h(
     limit: int = DEFAULT_LIMIT,
     cache_ttl: int = DEFAULT_CACHE_TTL,
     max_stale: int = DEFAULT_MAX_STALE,
-    user_agent: Optional[str] = None,
-) -> Optional[VolReading]:
+    user_agent: str | None = None,
+) -> VolReading | None:
     """Fetch 1-hour realized volatility for the given market.
 
     Results are cached for ``cache_ttl`` seconds. If live fetching fails, the
@@ -74,7 +75,7 @@ async def fetch_sigma_1h(
     """
 
     key = (base_url, symbol)
-    observed_ts: Optional[float] = None
+    observed_ts: float | None = None
     now = time.time()
 
     async with _cache_lock:
@@ -146,7 +147,7 @@ def _bucket(sig_pct: float) -> Bucket:
 
 def compute_sigma_from_closes(
     closes: Sequence[float],
-) -> Optional[Tuple[float, int]]:
+) -> tuple[float, int] | None:
     if len(closes) < 61:
         return None
 
@@ -178,7 +179,7 @@ async def clear_cache() -> None:
         _cache.clear()
 
 
-async def get_cache_age(base_url: str, symbol: str) -> Optional[float]:
+async def get_cache_age(base_url: str, symbol: str) -> float | None:
     """Return the age in seconds of the cached reading for the given market."""
     key = (base_url, symbol)
     async with _cache_lock:
@@ -192,7 +193,7 @@ async def get_cache_age(base_url: str, symbol: str) -> Optional[float]:
     return age
 
 
-def _extract_closes(payload: Any) -> Tuple[list[float], list[int]]:
+def _extract_closes(payload: Any) -> tuple[list[float], list[int]]:
     closes: list[float] = []
     close_times: list[int] = []
 
@@ -216,8 +217,8 @@ def _extract_closes(payload: Any) -> Tuple[list[float], list[int]]:
 
 
 async def _return_stale_if_available(
-    key: Tuple[str, str], max_stale: int
-) -> Optional[VolReading]:
+    key: tuple[str, str], max_stale: int
+) -> VolReading | None:
     async with _cache_lock:
         cached = _cache.get(key)
         current_ts = time.time()
@@ -231,8 +232,8 @@ async def _fetch_klines_with_retries(
     base_url: str,
     symbol: str,
     limit: int,
-    user_agent: Optional[str],
-) -> Optional[Any]:
+    user_agent: str | None,
+) -> Any | None:
     url = f"{base_url}/api/v3/klines"
     params = {"symbol": symbol, "interval": "1m", "limit": limit}
     ua = user_agent or DEFAULT_USER_AGENT
@@ -266,7 +267,7 @@ async def _fetch_klines_with_retries(
 
 
 def _is_fresh(
-    cached: Optional[Tuple[VolReading, float]], current_ts: float, ttl: int
+    cached: tuple[VolReading, float] | None, current_ts: float, ttl: int
 ) -> bool:
     if not cached:
         return False
@@ -277,8 +278,8 @@ def _is_fresh(
 
 
 def _maybe_return_stale(
-    cached: Optional[Tuple[VolReading, float]], current_ts: float, max_stale: int
-) -> Optional[VolReading]:
+    cached: tuple[VolReading, float] | None, current_ts: float, max_stale: int
+) -> VolReading | None:
     if not cached:
         return None
     if max_stale <= 0:

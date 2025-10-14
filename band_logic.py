@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from html import escape
-from typing import Optional, Set
 
 import band_advisor
 from shared_types import (
@@ -22,19 +21,19 @@ def fmt_range(lo: float, hi: float) -> str:
     return f"{fmt_price(lo)}–{fmt_price(hi)}"  # en dash
 
 
-def broken_bands(p: float, bands: BandMap) -> Set[BandName]:
+def broken_bands(p: float, bands: BandMap) -> set[BandName]:
     return {name for name, (lo, hi) in bands.items() if p < lo or p > hi}
 
 def format_advisory_card(
     price: float,
-    sigma_pct: Optional[float],
+    sigma_pct: float | None,
     bucket: Bucket,
     ranges: BandMap,
     split: BucketSplit,
     *,
     stale: bool = False,
-    amounts: Optional[AmountsMap] = None,
-    unallocated_usd: Optional[float] = None,
+    amounts: AmountsMap | None = None,
+    unallocated_usd: float | None = None,
 ) -> str:
     sigma_display = "–"
     if sigma_pct is not None:

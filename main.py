@@ -4,43 +4,41 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import logging.config
 import math
 import os
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Dict, Optional
+from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 import httpx
 import structlog
-from structlog.typing import FilteringBoundLogger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from zoneinfo import ZoneInfo
+from structlog.typing import FilteringBoundLogger
 
-from db_repo import DBRepo
-from band_logic import broken_bands
 import band_advisor
-import volatility as vol
-from telegram_service import TelegramSvc
 import net
+import volatility as vol
+from band_logic import broken_bands
+from db_repo import DBRepo
 from shared_types import BAND_ORDER, AdvisoryPayload, BandMap, BandName, Bucket, Side
-
+from telegram_service import TelegramSvc
 
 # ----------------------------
 # Settings
 # ----------------------------
 
 class Settings(BaseSettings):
-    TELEGRAM_BOT_TOKEN: Optional[str] = None
-    TELEGRAM_CHAT_ID: Optional[int] = None
+    TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_CHAT_ID: int | None = None
     TELEGRAM_ENABLED: bool = True
 
     METEORA_PAIR_ADDRESS: str
@@ -53,9 +51,9 @@ class Settings(BaseSettings):
     HTTP_UA_VOL: str = "outtaband-volatility/0.1 (+https://github.com/dsesclei/OuttaBand)"
 
     # Optional band seeds (low-high). If provided, they will be upserted at startup.
-    BAND_A: Optional[str] = None
-    BAND_B: Optional[str] = None
-    BAND_C: Optional[str] = None
+    BAND_A: str | None = None
+    BAND_B: str | None = None
+    BAND_C: str | None = None
 
     BINANCE_BASE_URL: str = "https://api.binance.us"
     BINANCE_SYMBOL: str = "SOLUSDT"
@@ -72,7 +70,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
 
     @model_validator(mode="after")
-    def _validate(self) -> "Settings":
+    def _validate(self) -> Settings:
         if not (0 <= self.DAILY_LOCAL_HOUR <= 23):
             raise ValueError("DAILY_LOCAL_HOUR must be between 0 and 23 inclusive")
         if not (0 <= self.DAILY_LOCAL_MINUTE <= 59):
@@ -102,10 +100,10 @@ local_tz = ZoneInfo(settings.LOCAL_TZ)
 
 SLOT_SECONDS = max(60, settings.CHECK_EVERY_MINUTES * 60)
 
-last_run_ts_check: Optional[int] = None
-last_run_ts_daily: Optional[int] = None
-next_run_ts_check: Optional[int] = None
-next_run_ts_daily: Optional[int] = None
+last_run_ts_check: int | None = None
+last_run_ts_daily: int | None = None
+next_run_ts_check: int | None = None
+next_run_ts_daily: int | None = None
 
 
 def floor_to_slot(ts: int) -> int:
@@ -117,11 +115,11 @@ def floor_to_slot(ts: int) -> int:
 # Globals
 # ----------------------------
 
-http_client: Optional[httpx.AsyncClient] = None
-db_conn: Optional[aiosqlite.Connection] = None
-repo: Optional[DBRepo] = None
-tg: Optional[TelegramSvc] = None
-scheduler: Optional[AsyncIOScheduler] = None
+http_client: httpx.AsyncClient | None = None
+db_conn: aiosqlite.Connection | None = None
+repo: DBRepo | None = None
+tg: TelegramSvc | None = None
+scheduler: AsyncIOScheduler | None = None
 
 
 # ----------------------------
@@ -218,11 +216,11 @@ async def fetch_json_with_retries(
     method: str,
     url: str,
     *,
-    headers: Optional[Dict[str, str]] = None,
-    params: Optional[Dict[str, Any]] = None,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
     attempts: int = 3,
     base_backoff: float = 0.5,
-) -> Optional[Any]:
+) -> Any | None:
     merged_headers = {"user-agent": settings.HTTP_UA_MAIN, **(headers or {})}
     try:
         response = await net.request_with_retries(
@@ -250,7 +248,7 @@ async def fetch_json_with_retries(
 # Price fetchers + decision
 # ----------------------------
 
-async def fetch_meteora_price(client: httpx.AsyncClient, pair_address: str) -> Optional[float]:
+async def fetch_meteora_price(client: httpx.AsyncClient, pair_address: str) -> float | None:
     base_url = settings.METEORA_BASE_URL.rstrip("/")
     url = f"{base_url}/pair/{pair_address}"
     data = await fetch_json_with_retries(client, "GET", url)
@@ -269,7 +267,7 @@ async def fetch_meteora_price(client: httpx.AsyncClient, pair_address: str) -> O
     return price
 
 
-async def decide_price(client: httpx.AsyncClient) -> Optional[float]:
+async def decide_price(client: httpx.AsyncClient) -> float | None:
     price = await fetch_meteora_price(client, settings.METEORA_PAIR_ADDRESS)
     if price is None:
         log.error("price_unavailable", source="meteora")
@@ -282,9 +280,9 @@ async def decide_price(client: httpx.AsyncClient) -> Optional[float]:
 async def process_breaches(
     price: float,
     src_label: str,
-    bucket: Optional[Bucket] = None,
+    bucket: Bucket | None = None,
     *,
-    now_slot_ts: Optional[int] = None,
+    now_slot_ts: int | None = None,
 ) -> None:
     assert repo is not None, "db repo not initialized"
     assert tg is not None, "telegram service not initialized"
@@ -368,7 +366,7 @@ async def process_breaches(
         log.info("no_breach", price=price, source=src_label)
 
 
-async def get_sigma_reading() -> Optional[vol.VolReading]:
+async def get_sigma_reading() -> vol.VolReading | None:
     if http_client is None:
         return None
 
@@ -414,7 +412,7 @@ async def check_once() -> None:
             log.warning("advisory_price_invalid", price=price)
             return
         sigma = await get_sigma_reading()
-        sigma_pct_log: Optional[float] = None
+        sigma_pct_log: float | None = None
         if sigma and math.isfinite(sigma.sigma_pct):
             sigma_pct_log = round(float(sigma.sigma_pct), 3)
 
@@ -484,7 +482,7 @@ async def send_daily_advisory() -> None:
             log.warning("sigma_miss_daily")
         bucket: Bucket = (sigma.bucket if sigma else None) or "mid"
 
-        sigma_pct: Optional[float] = None
+        sigma_pct: float | None = None
         if sigma and math.isfinite(sigma.sigma_pct):
             sigma_pct = float(sigma.sigma_pct)
 
@@ -500,7 +498,7 @@ async def send_daily_advisory() -> None:
         advisory_stale = sigma.stale if sigma else False
         advisory["stale"] = advisory_stale
 
-        drift_line: Optional[str] = None
+        drift_line: str | None = None
         if baseline and latest:
             base_sol, base_usdc, _ = baseline
             _snap_ts, snap_sol, snap_usdc, _snap_price, _snap_drift = latest
@@ -572,7 +570,7 @@ async def lifespan(app: FastAPI):
         await tg.start(repo)
 
     band_seed_values = (settings.BAND_A, settings.BAND_B, settings.BAND_C)
-    band_seeds = {name: value for name, value in zip(BAND_ORDER, band_seed_values) if value is not None}
+    band_seeds = {name: value for name, value in zip(BAND_ORDER, band_seed_values, strict=False) if value is not None}
     interval_minutes = max(1, settings.CHECK_EVERY_MINUTES)
     slot_seconds = max(60, interval_minutes * 60)
 
@@ -595,7 +593,7 @@ async def lifespan(app: FastAPI):
         http_ua_vol=settings.HTTP_UA_VOL,
     )
 
-    async def _price_provider() -> Optional[float]:
+    async def _price_provider() -> float | None:
         if http_client is None:
             return None
         return await decide_price(http_client)
@@ -719,13 +717,13 @@ except Exception:
 
 
 @app.get("/sigma")
-async def sigma() -> Dict[str, Any]:
+async def sigma() -> dict[str, Any]:
     data = await get_sigma_reading()
     return {"ok": data is not None, "data": data}
 
 
 @app.get("/healthz")
-async def healthz() -> Dict[str, Any]:
+async def healthz() -> dict[str, Any]:
     db_ok = False
     if db_conn is not None:
         try:
@@ -747,7 +745,7 @@ async def healthz() -> Dict[str, Any]:
             log.warning("health_scheduler_inspect_failed", err=str(exc))
 
     cache_age = await vol.get_cache_age(settings.BINANCE_BASE_URL, settings.BINANCE_SYMBOL)
-    health: Dict[str, Any] = {
+    health: dict[str, Any] = {
         "ok": bool(db_ok and http_client_ok and telegram_ready and scheduler_ok),
         "db_ok": db_ok,
         "http_client_ok": http_client_ok,
@@ -763,7 +761,7 @@ async def healthz() -> Dict[str, Any]:
 
 
 @app.get("/version")
-async def version() -> Dict[str, Optional[str]]:
+async def version() -> dict[str, str | None]:
     return {
         "service": SERVICE_NAME,
         "version": SERVICE_VERSION,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Literal, NamedTuple, Tuple, TypedDict, Union
+from typing import Literal, NamedTuple, TypedDict, Union
 
 # Core literals / atoms
 BandName = Literal["a", "b", "c"]
@@ -13,10 +13,10 @@ BucketSplit = tuple[int, int, int]
 # Band ranges / maps
 BandRange = tuple[float, float]
 BandMap = dict[BandName, BandRange]
-PolicyWidthMap = Dict[BandName, float]
+PolicyWidthMap = dict[BandName, float]
 
 # Per-band allocation amounts (SOL, USDC)
-AmountsMap = Dict[BandName, Tuple[float, float]]
+AmountsMap = dict[BandName, tuple[float, float]]
 
 
 class AdvisoryPayloadBase(TypedDict):
@@ -57,11 +57,11 @@ AdvPayload = BandMap
 PendingPayload = Union[AlertPayload, AdvPayload]
 
 __all__ = [
+    "BAND_ORDER",
     "AdvPayload",
     "AdvisoryPayload",
     "AlertPayload",
     "AmountsMap",
-    "BAND_ORDER",
     "BandMap",
     "BandName",
     "BandRange",

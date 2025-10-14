@@ -4,11 +4,13 @@ import asyncio
 import math
 import os
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from functools import wraps
 from html import escape
-from typing import Any, Awaitable, Callable, Optional, Tuple, cast
+from typing import Any, cast
 
+from structlog.typing import FilteringBoundLogger
 from telegram import CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -21,26 +23,24 @@ from telegram.ext import (
     filters,
 )
 
-from band_logic import fmt_range, format_advisory_card
 from band_advisor import compute_amounts, ranges_for_price, split_for_bucket, split_for_sigma
+from band_logic import fmt_range, format_advisory_card
 from db_repo import DBRepo
-from structlog.typing import FilteringBoundLogger
-from volatility import VolReading
 from shared_types import (
+    BAND_ORDER,
     AdvisoryPayload,
     AlertPayload,
-    AmountsMap,
-    BAND_ORDER,
     BandMap,
     BandName,
     BandRange,
     Baseline,
     Bucket,
     BucketSplit,
-    Snapshot,
     PendingKind,
     PendingPayload,
+    Snapshot,
 )
+from volatility import VolReading
 
 
 def _auth_cmd(fn):
@@ -81,16 +81,16 @@ class TelegramSvc:
     _PENDING_ALERT: PendingKind = "alert"
     _PENDING_ADV: PendingKind = "adv"
 
-    def __init__(self, token: str, chat_id: int, logger: Optional[FilteringBoundLogger] = None) -> None:
+    def __init__(self, token: str, chat_id: int, logger: FilteringBoundLogger | None = None) -> None:
         self._token = token
         self._chat_id = chat_id
-        self._app: Optional[Application] = None
-        self._repo: Optional[DBRepo] = None
+        self._app: Application | None = None
+        self._repo: DBRepo | None = None
         self._ready: asyncio.Event = asyncio.Event()
         self._pending: dict[int, tuple[PendingKind, PendingPayload]] = {}
-        self._log: Optional[FilteringBoundLogger] = logger
-        self._price_provider: Optional[Callable[[], Awaitable[Optional[float]]]] = None
-        self._sigma_provider: Optional[Callable[[], Awaitable[Optional[VolReading]]]] = None
+        self._log: FilteringBoundLogger | None = logger
+        self._price_provider: Callable[[], Awaitable[float | None]] | None = None
+        self._sigma_provider: Callable[[], Awaitable[VolReading | None]] | None = None
 
     def _prune_pending(self) -> None:
         cap = max(1, self.MAX_PENDING)
@@ -102,7 +102,7 @@ class TelegramSvc:
                 break
             del self._pending[mid]
 
-    async def _send(self, text: str, reply_markup: Optional[Any] = None) -> None:
+    async def _send(self, text: str, reply_markup: Any | None = None) -> None:
         app = self._ensure_app()
         await self._ready.wait()
         await app.bot.send_message(
@@ -115,7 +115,7 @@ class TelegramSvc:
         self,
         query: CallbackQuery,
         text: str,
-        reply_markup: Optional[Any] = None,
+        reply_markup: Any | None = None,
     ) -> None:
         try:
             await query.edit_message_text(text, reply_markup=reply_markup)
@@ -138,8 +138,8 @@ class TelegramSvc:
         query: CallbackQuery,
         expected_kind: PendingKind,
         *,
-        stale_text: Optional[str] = None,
-    ) -> Optional[Tuple[int, PendingPayload]]:
+        stale_text: str | None = None,
+    ) -> tuple[int, PendingPayload] | None:
         message = query.message
         mid = message.message_id if message else None
         if mid is None:
@@ -163,7 +163,7 @@ class TelegramSvc:
         text: str,
         count: int,
         *,
-        ignore_labels: Optional[set[str]] = None,
+        ignore_labels: set[str] | None = None,
     ) -> list[float]:
         labels = {label.lower() for label in (ignore_labels or set())}
         tokens = text.replace(":", " ").replace("/", " ").replace(",", " ").split()
@@ -189,7 +189,7 @@ class TelegramSvc:
             return ["(No bands configured)"]
         return [f"{escape(name.upper())}: {fmt_range(*rng)}" for name, rng in sorted(bands.items())]
 
-    def _sigma_summary(self, sigma: Optional[VolReading]) -> tuple[str, Bucket, Optional[float]]:
+    def _sigma_summary(self, sigma: VolReading | None) -> tuple[str, Bucket, float | None]:
         bucket: Bucket = sigma.bucket if sigma else "mid"
         label = escape(bucket.title())
         pct = float(sigma.sigma_pct) if sigma and math.isfinite(sigma.sigma_pct) else None
@@ -199,9 +199,9 @@ class TelegramSvc:
 
     def _amounts_lines(
         self,
-        price: Optional[float],
+        price: float | None,
         bucket: Bucket,
-        notional: Optional[float],
+        notional: float | None,
         tilt_sol_frac: float,
         split: BucketSplit,
     ) -> list[str]:
@@ -232,10 +232,10 @@ class TelegramSvc:
 
     def _drift_summary(
         self,
-        baseline: Optional[Baseline],
-        latest: Optional[Snapshot],
-        price: Optional[float],
-    ) -> Optional[str]:
+        baseline: Baseline | None,
+        latest: Snapshot | None,
+        price: float | None,
+    ) -> str | None:
         if price and math.isfinite(price) and price > 0 and baseline and latest:
             base_sol, base_usdc, _ = baseline
             _, snap_sol, snap_usdc, _, _ = latest
@@ -328,7 +328,7 @@ class TelegramSvc:
         await self._send(text)
 
     async def send_advisory_card(
-        self, advisory: AdvisoryPayload, drift_line: Optional[str] = None
+        self, advisory: AdvisoryPayload, drift_line: str | None = None
     ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
@@ -340,7 +340,7 @@ class TelegramSvc:
         bucket = advisory["bucket"]
         ranges = advisory["ranges"]
 
-        split: Optional[BucketSplit] = None
+        split: BucketSplit | None = None
         raw_split = advisory.get("split")
         if isinstance(raw_split, (list, tuple)) and len(raw_split) == 3:
             with suppress(Exception):
@@ -398,10 +398,10 @@ class TelegramSvc:
         self,
         band: BandName,
         price: float,
-        src_label: Optional[str],
+        src_label: str | None,
         bands: BandMap,
         suggested_range: BandRange,
-        policy_meta: Optional[Tuple[Bucket, float]] = None,
+        policy_meta: tuple[Bucket, float] | None = None,
     ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
@@ -420,7 +420,7 @@ class TelegramSvc:
             f"<b>Current {band_label}</b>: {fmt_range(*current)}\n"
             f"<b>Suggested {band_label}</b>: {fmt_range(*suggested_range)}"
         )
-        bucket_meta: Optional[Bucket] = None
+        bucket_meta: Bucket | None = None
         if policy_meta is not None:
             bucket_meta, width = policy_meta
             bucket_label = escape(bucket_meta.title())
@@ -432,7 +432,7 @@ class TelegramSvc:
         notional = await repo.get_notional_usd()
         tilt_sol_frac = await repo.get_tilt_sol_frac()
 
-        amount_line: Optional[str] = None
+        amount_line: str | None = None
         if (
             bucket_meta is not None
             and notional is not None
@@ -445,7 +445,7 @@ class TelegramSvc:
             except ValueError:
                 split = None
             if split:
-                pct = next((share for name, share in zip(BAND_ORDER, split) if name == band), None)
+                pct = next((share for name, share in zip(BAND_ORDER, split, strict=False) if name == band), None)
                 if pct is not None and pct > 0:
                     per_band_usd = (notional * pct) / 100.0
                     tilt = min(max(tilt_sol_frac, 0.0), 1.0)
@@ -477,13 +477,13 @@ class TelegramSvc:
             raise RuntimeError("Telegram service has not been started")
         return self._app
 
-    def set_price_provider(self, fn: Callable[[], Awaitable[Optional[float]]]) -> None:
+    def set_price_provider(self, fn: Callable[[], Awaitable[float | None]]) -> None:
         self._price_provider = fn
 
-    def set_sigma_provider(self, fn: Callable[[], Awaitable[Optional[VolReading]]]) -> None:
+    def set_sigma_provider(self, fn: Callable[[], Awaitable[VolReading | None]]) -> None:
         self._sigma_provider = fn
 
-    async def _get_price(self) -> Optional[float]:
+    async def _get_price(self) -> float | None:
         if not self._price_provider:
             return None
         try:
@@ -491,7 +491,7 @@ class TelegramSvc:
         except Exception:
             return None
 
-    async def _get_sigma(self) -> Optional[VolReading]:
+    async def _get_sigma(self) -> VolReading | None:
         if not self._sigma_provider:
             return None
         try:
@@ -934,11 +934,11 @@ class TelegramSvc:
 
         context.chat_data.pop("await_exact", None)
 
-    def _parse_first_number(self, text: str) -> Optional[float]:
+    def _parse_first_number(self, text: str) -> float | None:
         nums = self._extract_numbers(text, 1, ignore_labels=set())
         return nums[0] if nums else None
 
-    def _parse_tilt_sol_usdc(self, text: str) -> Optional[Tuple[float, float]]:
+    def _parse_tilt_sol_usdc(self, text: str) -> tuple[float, float] | None:
         numbers = self._extract_numbers(text, 2, ignore_labels={"sol", "usdc"})
         if not numbers:
             return None
@@ -967,7 +967,7 @@ class TelegramSvc:
             pct_value = 0.0
         return str(int(pct_value)) if pct_value.is_integer() else f"{pct_value:.1f}"
 
-    def _parse_two_numbers(self, text: str) -> Optional[Tuple[float, float]]:
+    def _parse_two_numbers(self, text: str) -> tuple[float, float] | None:
         numbers = self._extract_numbers(text, 2, ignore_labels={"sol", "usdc"})
         if len(numbers) < 2:
             return None

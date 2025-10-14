@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Iterable, Optional
+from typing import Any
 
 import httpx
 
@@ -15,7 +16,7 @@ DEFAULT_MAX_BACKOFF = 60.0           # Seconds
 DEFAULT_RETRY_AFTER_EPS = 0.10       # Up to +10% multiplicative jitter above Retry-After
 
 
-def parse_retry_after(response: Optional[httpx.Response]) -> Optional[float]:
+def parse_retry_after(response: httpx.Response | None) -> float | None:
     """Return wait seconds derived from a response's Retry-After header.
 
     Accepts both numeric seconds and HTTP-date per RFC 7231 (case-insensitive lookup).
@@ -24,7 +25,7 @@ def parse_retry_after(response: Optional[httpx.Response]) -> Optional[float]:
     if response is None:
         return None
 
-    header_value: Optional[str] = None
+    header_value: str | None = None
     for key, value in response.headers.items():
         if key.lower() == "retry-after":
             header_value = value
@@ -48,9 +49,9 @@ def parse_retry_after(response: Optional[httpx.Response]) -> Optional[float]:
         if parsed is None:
             return None
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.replace(tzinfo=UTC)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         delta = (parsed - now).total_seconds()
         return max(0.0, delta)
 
@@ -70,7 +71,7 @@ def _full_jitter_delay(
 
 
 def _apply_retry_after_floor(
-    retry_after_floor: Optional[float],
+    retry_after_floor: float | None,
     backoff: float,
     *,
     eps: float,
@@ -89,15 +90,15 @@ async def request_with_retries(
     method: str,
     url: str,
     *,
-    headers: Optional[dict[str, str]] = None,
-    params: Optional[dict[str, Any]] = None,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
     attempts: int = 3,
     base_backoff: float = 0.5,
     max_backoff: float = DEFAULT_MAX_BACKOFF,
-    timeout: Optional[httpx.Timeout] = None,
-    retry_on_status: Optional[Iterable[int]] = None,
+    timeout: httpx.Timeout | None = None,
+    retry_on_status: Iterable[int] | None = None,
     retry_after_jitter_eps: float = DEFAULT_RETRY_AFTER_EPS,
-    rng: Optional[random.Random] = None,
+    rng: random.Random | None = None,
     **request_kwargs: Any,
 ) -> httpx.Response:
     """Issue an HTTP request with retry/backoff handling.
@@ -140,7 +141,7 @@ async def request_with_retries(
     rng = rng or random
 
     for attempt in range(1, attempts + 1):
-        response: Optional[httpx.Response] = None
+        response: httpx.Response | None = None
         try:
             response = await client.request(
                 method,

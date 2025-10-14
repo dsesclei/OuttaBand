@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -13,7 +13,7 @@ def test_parse_retry_after_seconds() -> None:
 
 
 def test_parse_retry_after_http_date() -> None:
-    future = datetime.now(timezone.utc) + timedelta(seconds=5)
+    future = datetime.now(UTC) + timedelta(seconds=5)
     header = future.strftime("%a, %d %b %Y %H:%M:%S GMT")
     response = httpx.Response(429, headers={"Retry-After": header})
     wait = net.parse_retry_after(response)

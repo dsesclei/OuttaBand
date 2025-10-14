@@ -1,6 +1,7 @@
 import math
-import pytest
-from hypothesis import given, strategies as st
+
+from hypothesis import given
+from hypothesis import strategies as st
 
 import band_advisor as ba
 

@@ -7,8 +7,7 @@ recommendations, range building, and simple quantisation.
 from __future__ import annotations
 
 import math
-
-from typing import Dict, Optional, Set, Tuple, cast
+from typing import cast
 
 from shared_types import (
     BAND_ORDER,
@@ -20,7 +19,6 @@ from shared_types import (
     BucketSplit,
     PolicyWidthMap,
 )
-
 
 _BUCKET_WIDTHS: dict[Bucket, PolicyWidthMap] = {
     "low": {
@@ -41,7 +39,7 @@ _BUCKET_WIDTHS: dict[Bucket, PolicyWidthMap] = {
 }
 
 
-def widths_for_bucket(bucket: Bucket) -> Tuple[PolicyWidthMap, bool]:
+def widths_for_bucket(bucket: Bucket) -> tuple[PolicyWidthMap, bool]:
     """Return percent widths for the requested sigma bucket.
 
     The table encodes the policy mapping σ bucket → percent ranges. Buckets are
@@ -89,14 +87,14 @@ def compute_amounts(
     price: float,
     split: BucketSplit,
     ranges: BandMap,
-    notional_usd: Optional[float],
+    notional_usd: float | None,
     tilt_sol_frac: float,
     *,
-    present_bands: Optional[Set[BandName]] = None,
+    present_bands: set[BandName] | None = None,
     redistribute_skipped: bool = False,
     sol_decimals: int = 6,
     usdc_decimals: int = 2,
-) -> Tuple[AmountsMap, float]:
+) -> tuple[AmountsMap, float]:
     """Compute per-band token amounts using a simple tilt heuristic.
 
     The routine is advisory only: it applies a naive inside-band tilt to the
@@ -116,7 +114,7 @@ def compute_amounts(
         return cast(AmountsMap, {}), 0.0
 
     tilt = min(max(tilt_sol_frac, 0.0), 1.0)
-    split_map: Dict[BandName, int] = {band: pct for band, pct in zip(BAND_ORDER, split)}
+    split_map: dict[BandName, int] = {band: pct for band, pct in zip(BAND_ORDER, split, strict=False)}
 
     present: set[BandName] = set(ranges.keys()) if present_bands is None else set(present_bands)
     present &= set(BAND_ORDER)
@@ -172,7 +170,7 @@ def ranges_for_price(
 
 def build_advisory(
     price: float,
-    sigma_pct: Optional[float],
+    sigma_pct: float | None,
     bucket: Bucket,
     *,
     include_a_on_high: bool = False,

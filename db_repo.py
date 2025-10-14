@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import math
-import time
 import re
+import time
 from contextlib import asynccontextmanager
-from typing import Final, TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 import aiosqlite
 from structlog.typing import FilteringBoundLogger
 
-from shared_types import BAND_ORDER, BandMap, BandRange, Baseline, BandName, Side, Snapshot
+from shared_types import BAND_ORDER, BandMap, BandName, BandRange, Baseline, Side, Snapshot
 
 if TYPE_CHECKING:  # pragma: no cover - used only for type hints
     from main import Settings
@@ -22,7 +22,7 @@ BANDS_UPSERT_SQL: Final = (
 )
 
 _BAND_SPEC_RE: Final = re.compile(
-    r'^\s*([+-]?\d+(?:\.\d+)?)\s*[-:]\s*([+-]?\d+(?:\.\d+)?)\s*$'
+    r"^\s*([+-]?\d+(?:\.\d+)?)\s*[-:]\s*([+-]?\d+(?:\.\d+)?)\s*$"
 )
 
 
@@ -74,7 +74,7 @@ class DBRepo:
         self._conn.row_factory = aiosqlite.Row  # Named access + native types
         self._log: FilteringBoundLogger = logger
 
-    async def init(self, settings: "Settings") -> None:
+    async def init(self, settings: Settings) -> None:
         # Pragmatic defaults for reliability/perf
         await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.execute("PRAGMA journal_mode=WAL")
@@ -320,7 +320,7 @@ class DBRepo:
 
     # ---------- ENV-driven bands ----------
 
-    async def _upsert_bands_from_env(self, settings: "Settings") -> None:
+    async def _upsert_bands_from_env(self, settings: Settings) -> None:
         defaults: BandMap = {
             name: (float(low), float(high)) for name, low, high in self._DEFAULT_BANDS
         }
@@ -328,7 +328,7 @@ class DBRepo:
         # Single transaction, avoids nested tx in per-row upserts.
         async with self._tx():
             band_specs = (settings.BAND_A, settings.BAND_B, settings.BAND_C)
-            for name, spec in zip(BAND_ORDER, band_specs):
+            for name, spec in zip(BAND_ORDER, band_specs, strict=False):
                 if not spec:
                     continue
 
