@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+from html import escape
+from typing import Optional
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+import band_advisor
+from band_logic import fmt_range, format_advisory_card
+from shared_types import BandMap, Bucket, BucketSplit
+from volatility import VolReading
+
+
+def sigma_summary(sigma: Optional[VolReading]) -> tuple[str, str, Optional[float]]:
+    bucket = sigma.bucket if sigma else "mid"
+    label = escape(bucket.title())
+    pct = float(sigma.sigma_pct) if sigma and sigma.sigma_pct is not None else None
+    display = f"{pct:.2f}%" if pct is not None else "–"
+    stale = " [<i>Stale</i>]" if sigma and sigma.stale else ""
+    return f"<b>Volatility</b>: {display} ({label}){stale}", bucket, pct
+
+
+def bands_lines(bands: BandMap) -> list[str]:
+    if not bands:
+        return ["(No bands configured)"]
+    return [f"{escape(name.upper())}: {fmt_range(*rng)}" for name, rng in sorted(bands.items())]
+
+
+def advisory_text(
+    price: float,
+    sigma_pct: float | None,
+    bucket: Bucket,
+    ranges: BandMap,
+    split: BucketSplit,
+    *,
+    stale: bool = False,
+    amounts=None,
+    unallocated_usd: float | None = None,
+) -> str:
+    return format_advisory_card(
+        price,
+        sigma_pct,
+        bucket,
+        ranges,
+        split,
+        stale=stale,
+        amounts=amounts,
+        unallocated_usd=unallocated_usd,
+    )
+
+
+def drift_summary(
+    baseline: Optional[tuple[float, float, int]],
+    latest: Optional[tuple[int, float, float, float, float]],
+    price: Optional[float],
+) -> Optional[str]:
+    if price and baseline and latest:
+        base_sol, base_usdc, _ = baseline
+        _, snap_sol, snap_usdc, _, _ = latest
+        base_val = max(base_sol, 0.0) * price + max(base_usdc, 0.0)
+        cur_val = max(snap_sol, 0.0) * price + max(snap_usdc, 0.0)
+        if base_val > 0:
+            drift = cur_val - base_val
+            pct = (drift / base_val) * 100.0
+            return f"<b>Drift</b>: ${drift:+.2f} ({pct:+.2f}%)"
+    if latest:
+        _, _, _, snap_price, snap_drift = latest
+        return f"<b>Drift</b> (Last @ <b>{snap_price:.2f}</b>): ${snap_drift:+.2f}"
+    return None
+
+
+# Keyboards
+
+
+def adv_kb(token: str) -> InlineKeyboardMarkup:
+    from .callbacks import AdvAction, encode
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Apply All", callback_data=encode(AdvAction(a="apply", t=token))),
+                InlineKeyboardButton("Set Exact", callback_data=encode(AdvAction(a="set", t=token))),
+                InlineKeyboardButton("Ignore", callback_data=encode(AdvAction(a="ignore", t=token))),
+            ]
+        ]
+    )
+
+
+def alert_kb(band: str, token: str) -> InlineKeyboardMarkup:
+    from .callbacks import AlertAction, encode
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Apply", callback_data=encode(AlertAction(a="accept", band=band, t=token))),
+                InlineKeyboardButton("Ignore", callback_data=encode(AlertAction(a="ignore", band=band, t=token))),
+                InlineKeyboardButton("Set Exact", callback_data=encode(AlertAction(a="set", band=band, t=token))),
+            ]
+        ]
+    )
+
+
+def bands_menu_text(bands: BandMap) -> str:
+    if not bands:
+        return "(No bands configured)"
+    return "\n".join(
+        ["<b>Configured Bands</b>:"] + [f"{escape(name.upper())}: {fmt_range(*rng)}" for name, rng in sorted(bands.items())]
+    )
+
+
+def bands_menu_kb() -> InlineKeyboardMarkup:
+    from .callbacks import BandsAction, encode
+
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(f"Edit {column}", callback_data=encode(BandsAction(a="edit", band=column.lower())))] for column in "ABC"]
+        + [[InlineKeyboardButton("Back", callback_data=encode(BandsAction(a="back")))]]
+    )

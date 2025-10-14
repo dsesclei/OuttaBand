@@ -30,7 +30,7 @@ import volatility as vol
 from band_logic import broken_bands
 from db_repo import DBRepo
 from shared_types import BAND_ORDER, AdvisoryPayload, BandMap, BandName, Bucket, Side
-from telegram_service import TelegramSvc
+from telegram import TelegramApp
 
 # ----------------------------
 # Settings
@@ -118,7 +118,7 @@ def floor_to_slot(ts: int) -> int:
 http_client: httpx.AsyncClient | None = None
 db_conn: aiosqlite.Connection | None = None
 repo: DBRepo | None = None
-tg: TelegramSvc | None = None
+tg: TelegramApp | None = None
 scheduler: AsyncIOScheduler | None = None
 
 
@@ -561,7 +561,7 @@ async def lifespan(app: FastAPI):
     # one httpx client (http/2), shared
     http_client = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
 
-    tg = TelegramSvc(
+    tg = TelegramApp(
         settings.TELEGRAM_BOT_TOKEN or "",
         int(settings.TELEGRAM_CHAT_ID or 0),
         logger=base_log.bind(module="telegram"),
