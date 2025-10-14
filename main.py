@@ -24,9 +24,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from structlog.typing import FilteringBoundLogger
 
 import jobs
-from policy import volatility as vol
 from db_repo import DBRepo
+from policy import volatility as vol
 from policy.sources import BinanceVolSource
+from shared_types import BAND_ORDER
 from sources import MeteoraPriceSource
 from telegram import TelegramApp
 

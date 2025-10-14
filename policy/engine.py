@@ -7,7 +7,7 @@ import band_advisor as policy
 from shared_types import BAND_ORDER, BandMap, BandName, BandRange, Bucket, Side
 
 
-@dataclass
+@dataclass(slots=True)
 class BreachSuggestion:
     band: BandName
     side: Side
