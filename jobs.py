@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 
 import band_advisor
-import policy_engine
+from policy import engine as policy_engine
 from db_repo import DBRepo
 from shared_types import BandMap, Bucket, Side
 from sources import PriceSource, VolSource
