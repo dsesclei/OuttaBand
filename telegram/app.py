@@ -3,10 +3,15 @@ from __future__ import annotations
 import asyncio
 import math
 import os
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from html import escape
-from typing import Any, Awaitable, Callable, Optional, Tuple, cast
+from typing import Any, cast
 
+from band_advisor import compute_amounts, split_for_bucket
+from band_logic import fmt_range
+from db_repo import DBRepo
+from shared_types import AdvisoryPayload, BandMap, BandRange
 from telegram import CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -18,17 +23,12 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
-from band_advisor import compute_amounts, ranges_for_price, split_for_bucket, split_for_sigma
-from band_logic import fmt_range
-from db_repo import DBRepo
-from shared_types import BandMap, BandRange
 from volatility import VolReading
 
 from .callbacks import AdvAction, AlertAction, BandsAction, decode, encode
 from .handlers import BotCtx, Handlers, Providers
 from .pending import PendingStore
-from .render import advisory_text, alert_kb, adv_kb, bands_menu_kb, bands_menu_text
+from .render import adv_kb, advisory_text, alert_kb, bands_menu_kb, bands_menu_text
 
 
 class TelegramApp:
@@ -36,24 +36,24 @@ class TelegramApp:
 
     MAX_PENDING = int(os.getenv("LPBOT_PENDING_CAP", "100"))
 
-    def __init__(self, token: str, chat_id: int, logger: Optional[Any] = None) -> None:
+    def __init__(self, token: str, chat_id: int, logger: Any | None = None) -> None:
         self._token = token
         self._chat_id = chat_id
-        self._app: Optional[Application] = None
-        self._repo: Optional[DBRepo] = None
+        self._app: Application | None = None
+        self._repo: DBRepo | None = None
         self._ready: asyncio.Event = asyncio.Event()
         self._log = logger
-        self._price_provider: Optional[Callable[[], Awaitable[Optional[float]]]] = None
-        self._sigma_provider: Optional[Callable[[], Awaitable[Optional[VolReading]]]] = None
+        self._price_provider: Callable[[], Awaitable[float | None]] | None = None
+        self._sigma_provider: Callable[[], Awaitable[VolReading | None]] | None = None
         self._pending = PendingStore(cap=self.MAX_PENDING, ttl_s=3600)
-        self._handlers: Optional[Handlers] = None
+        self._handlers: Handlers | None = None
 
     # Provider setters
 
-    def set_price_provider(self, fn: Callable[[], Awaitable[Optional[float]]]) -> None:
+    def set_price_provider(self, fn: Callable[[], Awaitable[float | None]]) -> None:
         self._price_provider = fn
 
-    def set_sigma_provider(self, fn: Callable[[], Awaitable[Optional[VolReading]]]) -> None:
+    def set_sigma_provider(self, fn: Callable[[], Awaitable[VolReading | None]]) -> None:
         self._sigma_provider = fn
 
     # Lifecycle
@@ -106,53 +106,55 @@ class TelegramApp:
     async def send_text(self, text: str) -> None:
         await self._send(text, None)
 
-    async def send_advisory_card(self, advisory: dict[str, Any], drift_line: Optional[str] = None) -> None:
+    async def send_advisory_card(self, advisory: AdvisoryPayload, drift_line: str | None = None) -> None:
         app = self._ensure_app()
         await self._ready.wait()
         repo = self._ensure_repo()
 
-        price = float(advisory["price"])
-        sigma_pct = cast(Optional[float], advisory.get("sigma_pct"))
-        bucket = str(advisory["bucket"])
-        ranges = cast(BandMap, cast(Any, advisory["ranges"]))
+        price = advisory["price"]
+        sigma_pct = advisory["sigma_pct"]
+        bucket = advisory["bucket"]
+        ranges = advisory["ranges"]
+        split = advisory["split"]
 
-        split = split_for_sigma(sigma_pct)
-        raw_split = advisory.get("split")
-        if isinstance(raw_split, (list, tuple)) and len(raw_split) == 3:
-            split = tuple(int(float(item)) for item in raw_split)  # type: ignore[assignment]
-        else:
-            with suppress(ValueError):
-                split = split_for_bucket(bucket)  # type: ignore[assignment]
-
+        # Compute allocation figures
         notional = await repo.get_notional_usd()
         tilt = await repo.get_tilt_sol_frac()
-        amounts_map, unallocated_usd = compute_amounts(price, split, ranges, notional, tilt)  # type: ignore[arg-type]
+        amounts_map, unallocated_usd = compute_amounts(
+            price,
+            split,
+            ranges,
+            notional,
+            tilt,
+        )
 
+        # Render advisory text
         text = advisory_text(
             price,
             sigma_pct,
             bucket,
             ranges,
-            split,  # type: ignore[arg-type]
+            split,
             stale=bool(advisory.get("stale")),
             amounts=amounts_map or None,
             unallocated_usd=unallocated_usd if unallocated_usd > 0 else None,
         )
-        if drift_line is not None:
+        if drift_line:
             text = f"{text}\n{drift_line}"
 
+        # Stash pending payload (BandMap) and send
         token = self._pending.put("adv", dict(ranges))
         keyboard = adv_kb(token)
         await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=keyboard)
-
+        
     async def send_breach_offer(
         self,
         band: str,
         price: float,
-        src_label: Optional[str],
+        src_label: str | None,
         bands: BandMap,
         suggested_range: BandRange,
-        policy_meta: Optional[Tuple[str, float]] = None,
+        policy_meta: tuple[str, float] | None = None,
     ) -> None:
         app = self._ensure_app()
         await self._ready.wait()
@@ -178,14 +180,14 @@ class TelegramApp:
         repo = self._ensure_repo()
         notional = await repo.get_notional_usd()
         tilt_sol_frac = await repo.get_tilt_sol_frac()
-        amount_line: Optional[str] = None
+        amount_line: str | None = None
         try:
             split = split_for_bucket(policy_meta[0]) if policy_meta else None  # type: ignore[index]
         except ValueError:
             split = None
         if split and notional and price > 0 and math.isfinite(price):
             bands_order = ("a", "b", "c")
-            pct = next((share for name, share in zip(bands_order, split) if name == band), None)
+            pct = next((share for name, share in zip(bands_order, split, strict=False) if name == band), None)
             if pct and pct > 0:
                 per_band_usd = (notional * pct) / 100.0
                 tilt = min(max(tilt_sol_frac, 0.0), 1.0)
@@ -335,7 +337,7 @@ class TelegramApp:
                 if not pending:
                     await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
                     return
-                pend_band, rng = cast(Tuple[str, BandRange], pending.payload)
+                pend_band, rng = cast(tuple[str, BandRange], pending.payload)
                 if pend_band != payload.band:
                     await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
                     return
@@ -399,12 +401,12 @@ class TelegramApp:
 
     # Low-level helpers
 
-    async def _send(self, text: str, reply_markup: Optional[Any]) -> None:
+    async def _send(self, text: str, reply_markup: Any | None) -> None:
         app = self._ensure_app()
         await self._ready.wait()
         await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=reply_markup)
 
-    async def _edit_or_send(self, query: CallbackQuery, text: str, reply_markup: Optional[Any]) -> None:
+    async def _edit_or_send(self, query: CallbackQuery, text: str, reply_markup: Any | None) -> None:
         try:
             await query.edit_message_text(text, reply_markup=reply_markup)
         except Exception:

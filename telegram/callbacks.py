@@ -47,7 +47,7 @@ VERSION = 1
 def encode(obj: AdvAction | AlertAction | BandsAction) -> str:
     payload: _Envelope = {"v": VERSION, "k": obj.k, "a": obj.a}
     if isinstance(obj, (AdvAction, AlertAction)):
-        payload["t"] = getattr(obj, "t")
+        payload["t"] = obj.t
     if isinstance(obj, AlertAction):
         payload["band"] = obj.band
     if isinstance(obj, BandsAction) and obj.band is not None:

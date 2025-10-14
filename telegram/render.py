@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 from html import escape
-from typing import Optional
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-import band_advisor
 from band_logic import fmt_range, format_advisory_card
 from shared_types import BandMap, Bucket, BucketSplit
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from volatility import VolReading
 
 
-def sigma_summary(sigma: Optional[VolReading]) -> tuple[str, str, Optional[float]]:
+def sigma_summary(sigma: VolReading | None) -> tuple[str, str, float | None]:
     bucket = sigma.bucket if sigma else "mid"
     label = escape(bucket.title())
     pct = float(sigma.sigma_pct) if sigma and sigma.sigma_pct is not None else None
@@ -50,10 +47,10 @@ def advisory_text(
 
 
 def drift_summary(
-    baseline: Optional[tuple[float, float, int]],
-    latest: Optional[tuple[int, float, float, float, float]],
-    price: Optional[float],
-) -> Optional[str]:
+    baseline: tuple[float, float, int] | None,
+    latest: tuple[int, float, float, float, float] | None,
+    price: float | None,
+) -> str | None:
     if price and baseline and latest:
         base_sol, base_usdc, _ = baseline
         _, snap_sol, snap_usdc, _, _ = latest

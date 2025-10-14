@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import secrets
 import time
-from dataclasses import dataclass
-from typing import Any, Literal, Optional
 from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Literal
 
 Kind = Literal["adv", "alert"]
 
@@ -23,7 +23,7 @@ class PendingStore:
         self._cap = max(1, int(cap))
         self._ttl = max(1, int(ttl_s))
         # OrderedDict for evicting oldest entries in O(1)
-        self._by_token: "OrderedDict[str, Pending]" = OrderedDict()
+        self._by_token: OrderedDict[str, Pending] = OrderedDict()
 
     @staticmethod
     def new_token() -> str:
@@ -36,7 +36,7 @@ class PendingStore:
         self._by_token[token] = Pending(token, kind, payload, time.time())
         return token
 
-    def pop(self, kind: Kind, token: str) -> Optional[Pending]:
+    def pop(self, kind: Kind, token: str) -> Pending | None:
         # Remove and return the pending entry if it matches the given kind
         self._evict()
         p = self._by_token.pop(token, None)

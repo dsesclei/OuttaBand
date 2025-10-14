@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from html import escape
-from typing import Any, Awaitable, Callable, Optional, Tuple
+from typing import Any
 
 from band_advisor import compute_amounts, ranges_for_price, split_for_sigma
-from band_logic import fmt_range
 from db_repo import DBRepo
-from shared_types import BandMap
 from volatility import VolReading
 
 from .render import bands_lines, bands_menu_kb, bands_menu_text, drift_summary, sigma_summary
@@ -24,8 +23,8 @@ class BotCtx:
 
     def __init__(
         self,
-        send: Callable[[str, Optional[Any]], Awaitable[None]],
-        edit_or_send: Callable[[Any, str, Optional[Any]], Awaitable[None]],
+        send: Callable[[str, Any | None], Awaitable[None]],
+        edit_or_send: Callable[[Any, str, Any | None], Awaitable[None]],
         edit_by_id: Callable[[int, str], Awaitable[bool]],
     ):
         self.send = send
@@ -36,8 +35,8 @@ class BotCtx:
 class Providers:
     def __init__(
         self,
-        price_provider: Optional[Callable[[], Awaitable[Optional[float]]]] = None,
-        sigma_provider: Optional[Callable[[], Awaitable[Optional[VolReading]]]] = None,
+        price_provider: Callable[[], Awaitable[float | None]] | None = None,
+        sigma_provider: Callable[[], Awaitable[VolReading | None]] | None = None,
     ):
         self.price_provider = price_provider
         self.sigma_provider = sigma_provider
@@ -79,17 +78,17 @@ class Handlers:
                 break
         return numbers
 
-    def _parse_first_number(self, text: str) -> Optional[float]:
+    def _parse_first_number(self, text: str) -> float | None:
         numbers = self._extract_numbers(text, 1)
         return numbers[0] if numbers else None
 
-    def _parse_two_numbers(self, text: str) -> Optional[Tuple[float, float]]:
+    def _parse_two_numbers(self, text: str) -> tuple[float, float] | None:
         numbers = self._extract_numbers(text, 2, ignore_labels={"sol", "usdc"})
         if len(numbers) < 2:
             return None
         return numbers[0], numbers[1]
 
-    def _parse_tilt(self, text: str) -> Optional[Tuple[float, float]]:
+    def _parse_tilt(self, text: str) -> tuple[float, float] | None:
         numbers = self._extract_numbers(text, 2, ignore_labels={"sol", "usdc"})
         if not numbers:
             return None
