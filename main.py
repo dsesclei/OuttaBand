@@ -20,6 +20,7 @@ from structlog.typing import FilteringBoundLogger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from zoneinfo import ZoneInfo
@@ -38,8 +39,9 @@ from shared_types import BAND_ORDER, AdvisoryPayload, BandMap, BandName, Bucket,
 # ----------------------------
 
 class Settings(BaseSettings):
-    TELEGRAM_BOT_TOKEN: str
-    TELEGRAM_CHAT_ID: int
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_CHAT_ID: Optional[int] = None
+    TELEGRAM_ENABLED: bool = True
 
     METEORA_PAIR_ADDRESS: str
     METEORA_BASE_URL: str = "https://dlmm-api.meteora.ag"
@@ -87,6 +89,11 @@ class Settings(BaseSettings):
             ZoneInfo(self.LOCAL_TZ)
         except Exception as exc:  # pragma: no cover - defensive, requires malformed tz name
             raise ValueError(f"Invalid LOCAL_TZ '{self.LOCAL_TZ}'") from exc
+        if self.TELEGRAM_ENABLED:
+            if not self.TELEGRAM_BOT_TOKEN or self.TELEGRAM_CHAT_ID is None:
+                raise ValueError(
+                    "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required when TELEGRAM_ENABLED=true"
+                )
         return self
 
 
@@ -386,9 +393,18 @@ async def get_sigma_reading() -> Optional[vol.VolReading]:
 
 async def check_once() -> None:
     global last_run_ts_check, next_run_ts_check
-    assert http_client is not None, "http client not initialized"
-    assert repo is not None, "db repo not initialized"
-    assert tg is not None, "telegram service not initialized"
+    if http_client is None or repo is None or tg is None:
+        return
+    if not settings.TELEGRAM_ENABLED:
+        return
+    # singleton guard (half-slot ttl)
+    try:
+        got = await repo.acquire_lock("job:check-once", ttl_s=max(60, SLOT_SECONDS // 2))
+        if not got:
+            log.info("job_lock_skip", job="check-once")
+            return
+    except Exception:
+        pass
 
     try:
         price = await decide_price(http_client)
@@ -436,9 +452,17 @@ async def check_once() -> None:
 
 async def send_daily_advisory() -> None:
     global last_run_ts_daily, next_run_ts_daily
-    assert http_client is not None, "http client not initialized"
-    assert tg is not None, "telegram service not initialized"
-    assert repo is not None, "db repo not initialized"
+    if http_client is None or repo is None or tg is None:
+        return
+    if not settings.TELEGRAM_ENABLED:
+        return
+    try:
+        got = await repo.acquire_lock("job:daily-advisory", ttl_s=3600)
+        if not got:
+            log.info("job_lock_skip", job="daily-advisory")
+            return
+    except Exception:
+        pass
 
     if not settings.DAILY_ENABLED:
         log.info("advisory_skip_disabled")
@@ -540,11 +564,12 @@ async def lifespan(app: FastAPI):
     http_client = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
 
     tg = TelegramSvc(
-        settings.TELEGRAM_BOT_TOKEN,
-        settings.TELEGRAM_CHAT_ID,
+        settings.TELEGRAM_BOT_TOKEN or "",
+        int(settings.TELEGRAM_CHAT_ID or 0),
         logger=base_log.bind(module="telegram"),
     )
-    await tg.start(repo)
+    if settings.TELEGRAM_ENABLED:
+        await tg.start(repo)
 
     band_seed_values = (settings.BAND_A, settings.BAND_B, settings.BAND_C)
     band_seeds = {name: value for name, value in zip(BAND_ORDER, band_seed_values) if value is not None}
@@ -575,74 +600,83 @@ async def lifespan(app: FastAPI):
             return None
         return await decide_price(http_client)
 
-    tg.set_price_provider(_price_provider)
-    tg.set_sigma_provider(get_sigma_reading)
+    if settings.TELEGRAM_ENABLED:
+        tg.set_price_provider(_price_provider)
+        tg.set_sigma_provider(get_sigma_reading)
 
     # scheduler with explicit timezone and sane semantics
-    scheduler = AsyncIOScheduler(timezone=local_tz)
-    check_job_id = "check-once"
-    if 60 % interval_minutes == 0:
-        minutes_str = ",".join(
-            str(minute) for minute in range(0, 60, interval_minutes)
-        )
-        scheduler.add_job(
-            check_once,
-            "cron",
-            id=check_job_id,
-            minute=minutes_str,
-            second=0,
-            timezone=local_tz,
-            coalesce=True,
-            max_instances=1,
-            misfire_grace_time=120,
-        )
-        check_trigger_desc = f"cron:{minutes_str}"
-    else:
-        interval_seconds = interval_minutes * 60
-        scheduler.add_job(
-            check_once,
-            IntervalTrigger(seconds=interval_seconds, timezone=local_tz),
-            id=check_job_id,
-            coalesce=True,
-            max_instances=1,
-            misfire_grace_time=120,
-        )
-        check_trigger_desc = f"interval:{interval_seconds}s"
-    if settings.DAILY_ENABLED:
-        scheduler.add_job(
-            send_daily_advisory,
-            "cron",
-            id="daily-advisory",
-            hour=settings.DAILY_LOCAL_HOUR,
-            minute=settings.DAILY_LOCAL_MINUTE,
-            timezone=local_tz,
-            coalesce=True,
-            second=0,
-            misfire_grace_time=1800,
-            max_instances=1,
-        )
-    scheduler.start()
-    check_job = scheduler.get_job(check_job_id)
-    daily_job = scheduler.get_job("daily-advisory") if settings.DAILY_ENABLED else None
     global next_run_ts_check, next_run_ts_daily
-    next_run_ts_check = (
-        int(check_job.next_run_time.timestamp()) if check_job and check_job.next_run_time else None
-    )
-    next_run_ts_daily = (
-        int(daily_job.next_run_time.timestamp()) if daily_job and daily_job.next_run_time else None
-    )
-    if check_job:
-        log.info(
-            "job_next_run",
-            job_id=check_job.id,
-            next_run_ts=next_run_ts_check,
+    check_trigger_desc = "disabled"
+    scheduler = None
+    next_run_ts_check = None
+    next_run_ts_daily = None
+
+    if settings.TELEGRAM_ENABLED:
+        scheduler = AsyncIOScheduler(timezone=local_tz)
+        check_job_id = "check-once"
+        if 60 % interval_minutes == 0:
+            minutes_str = ",".join(
+                str(minute) for minute in range(0, 60, interval_minutes)
+            )
+            scheduler.add_job(
+                check_once,
+                "cron",
+                id=check_job_id,
+                minute=minutes_str,
+                second=0,
+                timezone=local_tz,
+                coalesce=True,
+                max_instances=1,
+                misfire_grace_time=120,
+            )
+            check_trigger_desc = f"cron:{minutes_str}"
+        else:
+            interval_seconds = interval_minutes * 60
+            scheduler.add_job(
+                check_once,
+                IntervalTrigger(seconds=interval_seconds, timezone=local_tz),
+                id=check_job_id,
+                coalesce=True,
+                max_instances=1,
+                misfire_grace_time=120,
+            )
+            check_trigger_desc = f"interval:{interval_seconds}s"
+        if settings.DAILY_ENABLED:
+            scheduler.add_job(
+                send_daily_advisory,
+                "cron",
+                id="daily-advisory",
+                hour=settings.DAILY_LOCAL_HOUR,
+                minute=settings.DAILY_LOCAL_MINUTE,
+                timezone=local_tz,
+                coalesce=True,
+                second=0,
+                misfire_grace_time=1800,
+                max_instances=1,
+            )
+        scheduler.start()
+        check_job = scheduler.get_job(check_job_id)
+        daily_job = scheduler.get_job("daily-advisory") if settings.DAILY_ENABLED else None
+        next_run_ts_check = (
+            int(check_job.next_run_time.timestamp()) if check_job and check_job.next_run_time else None
         )
-    if daily_job:
-        log.info(
-            "job_next_run",
-            job_id=daily_job.id,
-            next_run_ts=next_run_ts_daily,
+        next_run_ts_daily = (
+            int(daily_job.next_run_time.timestamp()) if daily_job and daily_job.next_run_time else None
         )
+        if check_job:
+            log.info(
+                "job_next_run",
+                job_id=check_job.id,
+                next_run_ts=next_run_ts_check,
+            )
+        if daily_job:
+            log.info(
+                "job_next_run",
+                job_id=daily_job.id,
+                next_run_ts=next_run_ts_daily,
+            )
+    else:
+        log.info("scheduler_disabled", reason="telegram disabled")
     log.info(
         "app_start",
         interval_min=settings.CHECK_EVERY_MINUTES,
@@ -661,7 +695,8 @@ async def lifespan(app: FastAPI):
             log.info("scheduler_stopped")
             scheduler = None
         if tg:
-            await tg.stop()
+            if settings.TELEGRAM_ENABLED:
+                await tg.stop()
             tg = None
         if http_client:
             await http_client.aclose()
@@ -676,6 +711,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+# expose prometheus metrics; don't crash if unavailable
+try:
+    Instrumentator().instrument(app).expose(app, include_in_schema=False, endpoint="/metrics")
+except Exception:
+    pass
 
 
 @app.get("/sigma")

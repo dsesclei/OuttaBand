@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 import re
 from contextlib import asynccontextmanager
 from typing import Final, TYPE_CHECKING
@@ -366,6 +367,37 @@ class DBRepo:
                     existing_low=current[0],
                     existing_high=current[1],
                 )
+
+    # ---------- Locks (singleton guards) ----------
+
+    async def acquire_lock(self, name: str, ttl_s: int = 120) -> bool:
+        """coarse advisory lock. returns True if acquired, False if held by someone else."""
+        now = int(time.time())
+        until = now + max(1, int(ttl_s))
+        async with self._tx(immediate=True):
+            await self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS locks (
+                    name TEXT PRIMARY KEY,
+                    until_ts INTEGER NOT NULL
+                ) WITHOUT ROWID
+                """
+            )
+            async with self._conn.execute("SELECT until_ts FROM locks WHERE name=?", (name,)) as cur:
+                row = await cur.fetchone()
+            if row is not None:
+                try:
+                    current_until = int(row["until_ts"])
+                except Exception:
+                    current_until = 0
+                if current_until > now:
+                    return False
+            await self._conn.execute(
+                "INSERT INTO locks(name, until_ts) VALUES(?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET until_ts=excluded.until_ts",
+                (name, until),
+            )
+            return True
 
     # ---------- Utilities ----------
 
