@@ -5,7 +5,7 @@ from html import escape
 from band_logic import fmt_range, format_advisory_card
 from shared_types import BAND_ORDER, AmountsMap, BandMap, BandName, Bucket, BucketSplit
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from volatility import VolReading
+from policy import VolReading
 
 
 def sigma_summary(sigma: VolReading | None) -> tuple[str, Bucket, float | None]:

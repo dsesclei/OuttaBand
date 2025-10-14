@@ -3,7 +3,7 @@ import random
 
 import pytest
 
-from volatility import compute_sigma_from_closes
+from policy.volatility import compute_sigma_from_closes
 
 
 def _generate_gbm_prices(count: int, *, seed: int = 42, drift: float = 0.0, vol: float = 0.002) -> list[float]:

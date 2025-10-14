@@ -32,7 +32,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from volatility import VolReading
+from policy import VolReading
 
 from .callbacks import AdvAction, AlertAction, BandsAction, decode, encode
 from .handlers import BotCtx, Handlers, Providers

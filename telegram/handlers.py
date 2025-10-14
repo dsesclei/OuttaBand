@@ -10,7 +10,7 @@ from typing import Any
 from band_advisor import compute_amounts, ranges_for_price, split_for_sigma
 from db_repo import DBRepo
 from shared_types import BAND_ORDER
-from volatility import VolReading
+from policy import VolReading
 
 from .render import bands_lines, bands_menu_kb, bands_menu_text, drift_summary, sigma_summary
 

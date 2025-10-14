@@ -9,7 +9,7 @@ import httpx
 import structlog
 
 import net
-import volatility
+from policy import volatility
 
 log = structlog.get_logger("sources")
 

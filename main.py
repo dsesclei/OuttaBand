@@ -24,7 +24,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from structlog.typing import FilteringBoundLogger
 
 import jobs
-import volatility as vol
+from policy import volatility as vol
 from db_repo import DBRepo
 from sources import BinanceVolSource, MeteoraPriceSource
 from telegram import TelegramApp
