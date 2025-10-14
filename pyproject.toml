@@ -20,6 +20,7 @@ dependencies = [
 [dependency-groups]
 dev = [
   "pytest>=8.0",
+  "pytest-asyncio>=0.23",
   "pytest-cov>=5.0",
   "hypothesis>=6.112",
   "ruff>=0.7",
@@ -44,6 +45,7 @@ warn_unreachable = true
 warn_unused_ignores = true
 disallow_any_generics = true
 plugins = ["pydantic.mypy"]
+exclude = "(?x)\n  ^tests/\n"
 
 [tool.pytest.ini_options]
 addopts = "-q -ra --disable-warnings"
