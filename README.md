@@ -1,32 +1,23 @@
-# Outtaband
+# OuttaBand
 
-A small asynchronous service that watches SOL/USDC ranges and sends Telegram advisories.  
-It’s built for reliability: structured logs, jittered retries, SQLite + WAL, and deterministic CI/CD.
+Telegram bot built for a friend to monitor Meteora liquidity‑providing ranges.  
+It watches configured bands, reports when positions drift out of range, and offers suggestions based on a policy (here, live Binance data) for rebalancing.
 
-## Development
+I later turned it into an exercise in productionizing a small async service using best practices, with LLM assistance.
 
-- `uv sync`  
-- `uv run pre-commit install`  
-- `uv run uvicorn main:app --reload`
+#### Development
+Requires `just`, `uv`, and Python 3.11+.
 
-## Quality
+```bash
+cp .env.example .env
+uv sync --dev
+just check      # run format/lint/type/test/actionlint/hadolint
+just run        # start dev server (http://127.0.0.1:8000)
+```
 
-- Ruff (lint + format), Mypy (strict), Pytest (unit + property).  
-- `uv run ruff check . ; uv run mypy . ; uv run pytest -q`
+#### Docker / Compose
 
-## Operations
-
-- `/healthz` for liveness  
-- `/metrics` for Prometheus  
-- Docker:  
-  `docker buildx build -t ghcr.io/dsesclei/outtaband:dev .`
-
-## CI/CD (GitHub Actions)
-
-- **Pull Requests:** lint → type → test → docker build → SBOM + scan → smoke.  
-- **Tags:** push image (GHCR) with OCI labels and attach SBOM.
-
-## Notes
-
-- Singleton job lock prevents duplicate sends when scaling out.  
-- Telegram can be disabled (`TELEGRAM_ENABLED=false`) to run in CI or headless mode.
+```bash
+just build
+just up
+```
