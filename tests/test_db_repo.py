@@ -8,6 +8,7 @@ import pytest_asyncio
 
 from config import Settings
 from db_repo import DBRepo
+from shared_types import Baseline
 from tests.conftest import now_time
 
 
@@ -100,7 +101,7 @@ async def test_set_get_baseline_roundtrip(repo: DBRepo) -> None:
     assert await repo.get_baseline() is None
     await repo.set_baseline(10.0, 20.0, 30)
     baseline = await repo.get_baseline()
-    assert baseline == (10.0, 20.0, 30)
+    assert baseline == Baseline(10.0, 20.0, 30)
 
 
 @pytest.mark.asyncio

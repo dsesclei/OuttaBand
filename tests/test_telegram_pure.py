@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from policy.volatility import VolReading
-from shared_types import BAND_ORDER
+from shared_types import BAND_ORDER, BandMap, Baseline, PendingKind, Snapshot
 from tests.conftest import Capture, now_time
 from tests.test_jobs import FakeRepo
 
@@ -89,14 +89,19 @@ def test_decode_rejects_malformed() -> None:
 
 def test_put_pop_by_kind() -> None:
     store = pending.PendingStore()
-    token = store.put("adv", {"a": (1.0, 2.0)})
-    assert store.pop("alert", token) is None
+    kind_adv: PendingKind = "adv"
+    kind_alert: PendingKind = "alert"
 
-    token2 = store.put("adv", {"b": (2.0, 3.0)})
-    popped = store.pop("adv", token2)
+    first_payload: BandMap = {"a": (1.0, 2.0)}
+    token = store.put(kind_adv, first_payload)
+    assert store.pop(kind_alert, token) is None
+
+    second_payload: BandMap = {"b": (2.0, 3.0)}
+    token2 = store.put(kind_adv, second_payload)
+    popped = store.pop(kind_adv, token2)
     assert popped is not None
-    assert popped.payload == {"b": (2.0, 3.0)}
-    assert store.pop("adv", token2) is None
+    assert popped.payload == second_payload
+    assert store.pop(kind_adv, token2) is None
 
 
 def test_ttl_eviction_on_access(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -111,13 +116,20 @@ def test_ttl_eviction_on_access(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_capacity_evicts_oldest() -> None:
     store = pending.PendingStore(cap=2, ttl_s=1000)
-    t1 = store.put("adv", {"a": (1.0, 2.0)})
-    t2 = store.put("adv", {"b": (2.0, 3.0)})
-    t3 = store.put("adv", {"c": (3.0, 4.0)})
+    kind_adv: PendingKind = "adv"
 
-    assert store.pop("adv", t1) is None
-    assert store.pop("adv", t2) is not None
-    assert store.pop("adv", t3) is not None
+    payloads: list[BandMap] = [
+        {"a": (1.0, 2.0)},
+        {"b": (2.0, 3.0)},
+        {"c": (3.0, 4.0)},
+    ]
+    t1 = store.put(kind_adv, payloads[0])
+    t2 = store.put(kind_adv, payloads[1])
+    t3 = store.put(kind_adv, payloads[2])
+
+    assert store.pop(kind_adv, t1) is None
+    assert store.pop(kind_adv, t2) is not None
+    assert store.pop(kind_adv, t3) is not None
 
 
 # --- Render -------------------------------------------------------------------
@@ -151,7 +163,7 @@ def test_sigma_summary_strings_and_stale_tag() -> None:
 
 
 def test_bands_menu_text_and_kb_layout() -> None:
-    bands = {"a": (90.0, 110.0), "b": (95.0, 115.0), "c": (100.0, 120.0)}
+    bands: BandMap = {"a": (90.0, 110.0), "b": (95.0, 115.0), "c": (100.0, 120.0)}
     text = render.bands_menu_text(bands)
     for name in BAND_ORDER:
         assert f"{name.upper()}:" in text
@@ -227,8 +239,8 @@ async def test_cmd_status_summarizes_state() -> None:
     repo = FakeRepo()
     repo.tilt = 0.6
     repo.notional = 1500.0
-    repo.baseline = (10.0, 5000.0, 100)
-    repo.snapshot = (200, 12.0, 4000.0, 105.0, -790.0)
+    repo.baseline = Baseline(10.0, 5000.0, 100)
+    repo.snapshot = Snapshot(200, 12.0, 4000.0, 105.0, -790.0)
 
     handlers = make_handlers(
         repo,
@@ -266,9 +278,9 @@ async def test_cmd_setbaseline_usage_and_apply(monkeypatch: pytest.MonkeyPatch) 
     await handlers.cmd_setbaseline(bot, "/setbaseline 3 sol 200 usdc")
     assert capture.messages[-1][0] == "[<i>Applied</i>] Baseline → 3 SOL, 200 USDC"
     assert repo.baseline is not None
-    assert repo.baseline[0] == 3
-    assert repo.baseline[1] == 200
-    assert repo.baseline[2] == 1234
+    assert repo.baseline.sol == 3
+    assert repo.baseline.usdc == 200
+    assert repo.baseline.ts == 1234
 
 
 @pytest.mark.asyncio
@@ -327,14 +339,14 @@ async def test_cmd_updatebalances_requires_price_and_baseline_then_records_snaps
     assert capture.messages[-1][0] == "[<i>Error</i>] Baseline not set. Run <code>/setbaseline</code> first."
     assert repo.snapshot is None
 
-    repo.baseline = (1.0, 2.0, 10)
+    repo.baseline = Baseline(1.0, 2.0, 10)
     now_time(monkeypatch, 2000.0)
     await handlers_baseline_missing.cmd_updatebalances(bot, "/updatebalances 1 sol 2 usdc")
     message = capture.messages[-1][0]
     assert message.startswith("[<i>Applied</i>] <b>Drift</b>:")
     assert "@ Price <b>100.00</b>" in message
     assert repo.snapshot is not None
-    assert repo.snapshot[1] == pytest.approx(1.0)
-    assert repo.snapshot[2] == pytest.approx(2.0)
-    assert repo.snapshot[3] == pytest.approx(100.0)
-    assert repo.snapshot[0] == 2000
+    assert repo.snapshot.sol == pytest.approx(1.0)
+    assert repo.snapshot.usdc == pytest.approx(2.0)
+    assert repo.snapshot.price == pytest.approx(100.0)
+    assert repo.snapshot.ts == 2000

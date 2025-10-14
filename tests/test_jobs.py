@@ -6,44 +6,54 @@ import pytest
 import policy.band_advisor as band_advisor
 from jobs import AppContext, JobSettings, check_once, floor_to_slot, send_daily_advisory
 from policy.volatility import VolReading
+from shared_types import (
+    AdvisoryPayload,
+    BandMap,
+    BandName,
+    BandRange,
+    Baseline,
+    Bucket,
+    Side,
+    Snapshot,
+)
 
 
 class FakeRepo:
     def __init__(self) -> None:
-        self.bands: dict[str, tuple[float, float]] = {
+        self.bands: BandMap = {
             "a": (90.0, 110.0),
             "b": (95.0, 115.0),
             "c": (100.0, 120.0),
         }
-        self.alerts: dict[tuple[str, str], int] = {}
-        self.baseline: tuple[float, float, int] | None = None
-        self.snapshot: tuple[int, float, float, float, float] | None = None
+        self.alerts: dict[tuple[BandName, Side], int] = {}
+        self.baseline: Baseline | None = None
+        self.snapshot: Snapshot | None = None
         self.notional: float | None = 1000.0
         self.tilt: float = 0.5
 
-    async def get_bands(self) -> dict[str, tuple[float, float]]:
+    async def get_bands(self) -> BandMap:
         return dict(self.bands)
 
     async def upsert_band(self, name: str, low: float, high: float) -> None:
         self.bands[name] = (low, high)
 
-    async def get_last_alert(self, band: str, side: str) -> int | None:
+    async def get_last_alert(self, band: BandName, side: Side) -> int | None:
         return self.alerts.get((band, side))
 
-    async def set_last_alert(self, band: str, side: str, ts: int) -> None:
+    async def set_last_alert(self, band: BandName, side: Side, ts: int) -> None:
         self.alerts[(band, side)] = ts
 
-    async def get_baseline(self) -> tuple[float, float, int] | None:
+    async def get_baseline(self) -> Baseline | None:
         return self.baseline
 
     async def set_baseline(self, sol: float, usdc: float, ts: int) -> None:
-        self.baseline = (sol, usdc, ts)
+        self.baseline = Baseline(sol, usdc, ts)
 
-    async def get_latest_snapshot(self) -> tuple[int, float, float, float, float] | None:
+    async def get_latest_snapshot(self) -> Snapshot | None:
         return self.snapshot
 
     async def insert_snapshot(self, ts: int, sol: float, usdc: float, price: float, drift: float) -> None:
-        self.snapshot = (ts, sol, usdc, price, drift)
+        self.snapshot = Snapshot(ts, sol, usdc, price, drift)
 
     async def get_notional_usd(self) -> float | None:
         return self.notional
@@ -60,18 +70,18 @@ class FakeRepo:
 
 class FakeTG:
     def __init__(self) -> None:
-        self.breaches: list[dict[str, Any]] = []
-        self.advisories: list[dict[str, Any]] = []
+        self.breaches: list[dict[str, object]] = []
+        self.advisories: list[dict[str, object]] = []
 
     async def send_breach_offer(
         self,
         *,
-        band: str,
+        band: BandName,
         price: float,
         src_label: str | None,
-        bands: dict[str, tuple[float, float]],
-        suggested_range: tuple[float, float],
-        policy_meta: tuple[str, float] | None,
+        bands: BandMap,
+        suggested_range: BandRange,
+        policy_meta: tuple[Bucket, float] | None,
     ) -> None:
         self.breaches.append(
             {
@@ -83,7 +93,7 @@ class FakeTG:
             }
         )
 
-    async def send_advisory_card(self, advisory: dict[str, Any], drift_line: str | None = None) -> None:
+    async def send_advisory_card(self, advisory: AdvisoryPayload, drift_line: str | None = None) -> None:
         self.advisories.append({"advisory": advisory, "drift_line": drift_line})
 
 
@@ -227,10 +237,10 @@ async def test_send_daily_advisory_includes_amounts_and_drift(default_ctx: tuple
     await repo.set_notional_usd(500.0)
     await repo.set_tilt_sol_frac(0.6)
     await repo.set_baseline(1.0, 100.0, 0)
-    repo.snapshot = (1, 1.5, 80.0, 105.0, 0.0)
+    repo.snapshot = Snapshot(1, 1.5, 80.0, 105.0, 0.0)
     await repo.set_last_alert("a", "low", 0)  # Ensure repo is used
     await repo.insert_snapshot(2, 1.4, 82.0, 106.0, 0.0)
-    repo.snapshot = (2, 1.4, 82.0, 106.0, 0.0)
+    repo.snapshot = Snapshot(2, 1.4, 82.0, 106.0, 0.0)
 
     ctx.price = FakePrice(110.0)
     ctx.vol = FakeVol(VolReading(sigma_pct=0.5, bucket="low"))
