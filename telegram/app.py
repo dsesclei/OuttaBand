@@ -8,7 +8,7 @@ from contextlib import suppress
 from html import escape
 from typing import Any, cast
 
-from band_advisor import compute_amounts, split_for_bucket
+from policy.band_advisor import compute_amounts, split_for_bucket
 from band_logic import fmt_range
 from db_repo import DBRepo
 from shared_types import (

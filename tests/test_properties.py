@@ -3,7 +3,7 @@ import math
 from hypothesis import given
 from hypothesis import strategies as st
 
-import band_advisor as ba
+import policy.band_advisor as ba
 
 
 @given(

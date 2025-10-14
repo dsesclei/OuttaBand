@@ -5,8 +5,8 @@ import math
 import time
 from dataclasses import dataclass
 
-import band_advisor
 from db_repo import DBRepo
+import policy.band_advisor as band_advisor
 from policy import engine as policy_engine
 from policy.sources import VolSource
 from shared_types import BandMap, Bucket, Side

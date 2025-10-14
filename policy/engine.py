@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import band_advisor as policy
+import policy.band_advisor as band_policy
 from shared_types import BAND_ORDER, BandMap, BandName, BandRange, Bucket, Side
 
 
@@ -19,7 +19,7 @@ class BreachSuggestion:
 def suggest_ranges(price: float, bucket: Bucket, include_a_on_high: bool) -> BandMap:
     """Return policy ranges for ``price`` under ``bucket``."""
 
-    return policy.ranges_for_price(price, bucket, include_a_on_high=include_a_on_high)
+    return band_policy.ranges_for_price(price, bucket, include_a_on_high=include_a_on_high)
 
 
 def compute_breaches(
@@ -31,7 +31,7 @@ def compute_breaches(
     """Compare stored bands with policy suggestions and flag breaches."""
 
     suggestions = suggest_ranges(price, bucket, include_a_on_high)
-    widths, _ = policy.widths_for_bucket(bucket)
+    widths, _ = band_policy.widths_for_bucket(bucket)
     breaches: list[BreachSuggestion] = []
 
     for band in BAND_ORDER:

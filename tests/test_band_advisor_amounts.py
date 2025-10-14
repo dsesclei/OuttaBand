@@ -1,6 +1,6 @@
 import math
 
-import band_advisor
+import policy.band_advisor as band_advisor
 from shared_types import BAND_ORDER
 
 

@@ -7,7 +7,7 @@ from contextlib import suppress
 from html import escape
 from typing import Any
 
-from band_advisor import compute_amounts, ranges_for_price, split_for_sigma
+from policy.band_advisor import compute_amounts, ranges_for_price, split_for_sigma
 from db_repo import DBRepo
 from shared_types import BAND_ORDER
 from policy import VolReading
