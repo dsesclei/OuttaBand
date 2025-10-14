@@ -87,12 +87,12 @@ jobs:
           TELEGRAM_ENABLED: "false"
         run: |
           docker compose up -d
-          for i in {1..30}; do
+          for attempt in {1..30}; do
             sleep 2
             code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/healthz || true)
             if [ "$code" = "200" ]; then exit 0; fi
           done
-          echo "healthz never returned 200"
+          echo "healthz never returned 200 after $attempt attempts"
           docker compose logs || true
           exit 1
 
