@@ -1,7 +1,7 @@
 [project]
 name = "lpbot"
 version = "0.0.0"
-description = "async band watcher with telegram advisories; demo ci/cd & sre sensibilities"
+description = "async band watcher with telegram advisories"
 requires-python = ">=3.11"
 dependencies = [
   "aiosqlite>=0.20",
