@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
+from typing import Any, Protocol
 
 from db_repo import DBRepo
 import policy.band_advisor as band_advisor
@@ -12,7 +13,27 @@ from policy.vol_sources import VolSource
 from shared_types import BandMap, Bucket, Side
 from price_sources import PriceSource
 from structlog.typing import FilteringBoundLogger
-from telegram import TelegramApp
+
+
+# Keep jobs orchestration independent from the third-party telegram package so the
+# module stays importable in pure unit tests and other contexts. We document the
+# surface we rely on via a Protocol, letting type-checkers validate real clients
+# while tests can supply minimal fakes.
+class TGProto(Protocol):
+    async def send_breach_offer(
+        self,
+        *,
+        band: str,
+        price: float,
+        src_label: str | None,
+        bands: dict[str, tuple[float, float]],
+        suggested_range: tuple[float, float],
+        policy_meta: tuple[str, float] | None,
+    ) -> None:
+        ...
+
+    async def send_advisory_card(self, advisory: dict[str, Any], drift_line: str | None = None) -> None:
+        ...
 
 
 @dataclass(slots=True)
@@ -26,7 +47,7 @@ class JobSettings:
 @dataclass(slots=True)
 class AppContext:
     repo: DBRepo
-    tg: TelegramApp
+    tg: TGProto
     price: PriceSource
     vol: VolSource
     job: JobSettings
