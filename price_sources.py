@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, SupportsFloat, SupportsIndex, cast
 
 import httpx
 import structlog
@@ -45,9 +45,11 @@ class MeteoraPriceSource(PriceSource):
             log.debug("meteora_price_json_error", error=str(exc))
             return None
 
-        current_price = payload.get("current_price") if isinstance(payload, dict) else None
+        current_price_obj = payload.get("current_price") if isinstance(payload, dict) else None
+        if current_price_obj is None:
+            return None
         try:
-            price = float(current_price)
+            price = float(cast(SupportsFloat | SupportsIndex | str, current_price_obj))
         except (TypeError, ValueError):
             return None
 

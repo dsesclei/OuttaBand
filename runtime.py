@@ -4,13 +4,13 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import import_module
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import aiosqlite
 import httpx
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
+from apscheduler.triggers.interval import IntervalTrigger  # type: ignore[import-untyped]
 
 import jobs
 from config import Settings
@@ -22,12 +22,12 @@ from price_sources import MeteoraPriceSource
 DEFAULT_TIMEOUT = httpx.Timeout(7.5, read=7.5, write=7.5, connect=5.0, pool=5.0)
 
 
-def _load_telegram_app():
+def _load_telegram_app() -> type[Any]:
     module = import_module("telegram.app")
     telegram_app = getattr(module, "TelegramApp", None)
     if telegram_app is None:
         raise ImportError("telegram.app.TelegramApp not found")
-    return telegram_app
+    return cast(type[Any], telegram_app)
 
 
 class _DisabledTelegram:
@@ -119,9 +119,10 @@ class Runtime:
             include_a_on_high=s.INCLUDE_A_ON_HIGH,
             price_label="meteora",
         )
+        tg_client = cast(jobs.TGProto, self.tg)
         self.ctx = jobs.AppContext(
             repo=self.repo,
-            tg=self.tg,
+            tg=tg_client,
             price=price_src,
             vol=vol_src,
             job=job_settings,
@@ -217,7 +218,7 @@ class Runtime:
         sched = AsyncIOScheduler(timezone=self.tz)
         self.scheduler = sched
 
-        async def run_check_once():
+        async def run_check_once() -> None:
             if not (self.repo and self.ctx and self.scheduler):
                 return
             try:
@@ -244,7 +245,7 @@ class Runtime:
                     "job_next_run", job_id="check-once", next_run_ts=self.next_run_ts_check
                 )
 
-        async def run_daily_advisory():
+        async def run_daily_advisory() -> None:
             if not (self.repo and self.ctx and self.scheduler):
                 return
             try:

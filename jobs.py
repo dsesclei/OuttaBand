@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 from structlog.typing import FilteringBoundLogger
 
@@ -14,7 +14,7 @@ from db_repo import DBRepo
 from policy import engine as policy_engine
 from policy.vol_sources import VolSource
 from price_sources import PriceSource
-from shared_types import BandMap, Bucket, Side
+from shared_types import AdvisoryPayload, BandMap, Bucket, Side
 
 
 # Keep jobs orchestration independent from the third-party telegram package so the
@@ -28,13 +28,13 @@ class TGProto(Protocol):
         band: str,
         price: float,
         src_label: str | None,
-        bands: dict[str, tuple[float, float]],
+        bands: BandMap,
         suggested_range: tuple[float, float],
         policy_meta: tuple[str, float] | None,
     ) -> None: ...
 
     async def send_advisory_card(
-        self, advisory: dict[str, Any], drift_line: str | None = None
+        self, advisory: AdvisoryPayload, drift_line: str | None = None
     ) -> None: ...
 
 
@@ -79,14 +79,14 @@ async def check_once(ctx: AppContext, *, now_ts: int | None = None) -> None:
 
     sigma = await ctx.vol.read()
     sigma_pct_log: float | None = None
+    sigma_pct_value: float | None = None
     if sigma is not None:
         try:
-            sigma_pct_raw = float(sigma.sigma_pct)
+            sigma_pct_value = float(sigma.sigma_pct)
         except (TypeError, ValueError):
-            sigma_pct_raw = None
-        else:
-            if math.isfinite(sigma_pct_raw):
-                sigma_pct_log = round(sigma_pct_raw, 3)
+            sigma_pct_value = None
+    if sigma_pct_value is not None and math.isfinite(sigma_pct_value):
+        sigma_pct_log = round(sigma_pct_value, 3)
 
     log_kwargs = {
         "sigma_pct": sigma_pct_log,
@@ -182,12 +182,12 @@ async def send_daily_advisory(ctx: AppContext) -> None:
     sigma_pct: float | None = None
     if sigma is not None:
         try:
-            sigma_pct_raw = float(sigma.sigma_pct)
+            sigma_pct_value = float(sigma.sigma_pct)
         except (TypeError, ValueError):
-            sigma_pct_raw = None
+            sigma_pct_value = None
         else:
-            if math.isfinite(sigma_pct_raw):
-                sigma_pct = sigma_pct_raw
+            if sigma_pct_value is not None and math.isfinite(sigma_pct_value):
+                sigma_pct = sigma_pct_value
 
     advisory = band_advisor.build_advisory(
         price,
@@ -195,7 +195,7 @@ async def send_daily_advisory(ctx: AppContext) -> None:
         bucket,
         include_a_on_high=ctx.job.include_a_on_high,
     )
-    if sigma:
+    if sigma is not None:
         advisory["stale"] = bool(sigma.stale)
 
     baseline = await ctx.repo.get_baseline()

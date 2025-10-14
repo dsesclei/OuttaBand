@@ -3,8 +3,9 @@ from __future__ import annotations
 import math
 import re
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, SupportsInt, cast
 
 import aiosqlite
 from structlog.typing import FilteringBoundLogger
@@ -88,7 +89,7 @@ class DBRepo:
     # ---------- Small helpers ----------
 
     @asynccontextmanager
-    async def _tx(self, *, immediate: bool = False):
+    async def _tx(self, *, immediate: bool = False) -> AsyncIterator[None]:
         await self._conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         try:
             yield
@@ -150,7 +151,9 @@ class DBRepo:
             "SELECT last_sent_ts FROM alerts WHERE band=? AND side=?",
             (band, side),
         )
-        return int(ts) if ts is not None else None
+        if ts is None:
+            return None
+        return int(cast(SupportsInt, ts))
 
     async def set_last_alert(self, band: str, side: Side, ts: int) -> None:
         async with self._tx():
@@ -308,7 +311,7 @@ class DBRepo:
             return
 
         current = await self._scalar("SELECT COUNT(1) FROM snapshots")
-        count = int(current or 0)
+        count = 0 if current is None else int(cast(SupportsInt, current))
 
         async with self._tx():
             if count == 0:

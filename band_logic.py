@@ -40,8 +40,7 @@ def format_advisory_card(
     if sigma_pct is not None:
         sigma_display = f"{sigma_pct:.2f}%"
 
-    bucket_label_raw = bucket or "Unknown"
-    bucket_label = bucket_label_raw.title()
+    bucket_label = bucket.title()
     header = (
         f"<b>Bands</b> at P=<b>{price:.2f}</b> | σ=<b>{sigma_display}</b> ({escape(bucket_label)}) "
         f"→ Split <b>{split[0]}/{split[1]}/{split[2]}</b>"

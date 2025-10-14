@@ -80,7 +80,7 @@ async def fetch_sigma_1h(
 
     async with _cache_lock:
         cached = _cache.get(key)
-        if _is_fresh(cached, now, cache_ttl):
+        if cached and _is_fresh(cached, now, cache_ttl):
             return replace(cached[0], stale=False)
         observed_ts = cached[1] if cached else None
 

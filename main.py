@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from typing import Any
 
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -19,33 +20,33 @@ with suppress(Exception):
 
 
 @app.on_event("startup")
-async def _startup():
+async def _startup() -> None:
     rt = Runtime(settings=settings, tz=tz(settings), log=log)
     await rt.start()
     app.state.runtime = rt
 
 
 @app.on_event("shutdown")
-async def _shutdown():
+async def _shutdown() -> None:
     rt: Runtime | None = getattr(app.state, "runtime", None)
     if rt:
         await rt.stop()
 
 
 @app.get("/sigma")
-async def sigma():
+async def sigma() -> dict[str, Any]:
     rt: Runtime = app.state.runtime
     return await rt.sigma_payload()
 
 
 @app.get("/healthz")
-async def healthz():
+async def healthz() -> dict[str, Any]:
     rt: Runtime = app.state.runtime
     return await rt.health_payload()
 
 
 @app.get("/version")
-async def version():
+async def version() -> dict[str, str | None]:
     return service_meta()
 
 

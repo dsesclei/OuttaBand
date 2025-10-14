@@ -125,8 +125,12 @@ def configure_logging() -> FilteringBoundLogger:
         wrapper_class=structlog.make_filtering_bound_logger(level_num),
         cache_logger_on_first_use=True,
     )
-    base = structlog.get_logger("lpbot").bind(service=SERVICE_NAME, version=SERVICE_VERSION)
-    return base.bind(git_sha=GIT_SHA) if GIT_SHA else base
+    base_logger: FilteringBoundLogger = structlog.get_logger("lpbot").bind(
+        service=SERVICE_NAME, version=SERVICE_VERSION
+    )
+    if GIT_SHA:
+        return base_logger.bind(git_sha=GIT_SHA)
+    return base_logger
 
 
 def service_meta() -> dict[str, str | None]:

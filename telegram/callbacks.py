@@ -69,9 +69,9 @@ def decode(s: str) -> AdvAction | AlertAction | BandsAction | None:
     if k == "adv" and a in {"apply", "ignore", "set"} and isinstance(data.get("t"), str):
         return AdvAction(a=a, t=data["t"])
     if k == "alert" and a in {"accept", "ignore", "set"} and isinstance(data.get("t"), str):
-        band = data.get("band")
-        if isinstance(band, str) and band in BAND_ORDER:
-            return AlertAction(a=a, band=cast(BandName, band), t=data["t"])
+        alert_band = data.get("band")
+        if isinstance(alert_band, str) and alert_band in BAND_ORDER:
+            return AlertAction(a=a, band=cast(BandName, alert_band), t=data["t"])
     if k == "bands" and a in {"edit", "back"}:
         band_val = data.get("band")
         band: BandName | None = None

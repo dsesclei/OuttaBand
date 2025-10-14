@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import math
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from contextlib import suppress
 from html import escape
-from typing import Any, cast
+from typing import Any, Final, Literal, cast
 
 from band_logic import fmt_range
 from db_repo import DBRepo
@@ -21,8 +21,15 @@ from shared_types import (
     BandName,
     BandRange,
     Bucket,
+    PendingKind,
 )
-from telegram import CallbackQuery, ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (  # type: ignore[attr-defined]
+    CallbackQuery,
+    ForceReply,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -39,28 +46,31 @@ from .handlers import BotCtx, Handlers, Providers
 from .pending import PendingStore
 from .render import adv_kb, advisory_text, alert_kb, bands_menu_kb, bands_menu_text
 
+ApplicationType = Application[Any, Any, Any, Any, Any, Any]
+HandlerFn = Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]
+
 # ---------- Constants ----------
 
 # Pending kinds
-PENDING_KIND_ADV = "adv"
-PENDING_KIND_ALERT = "alert"
+PENDING_KIND_ADV: PendingKind = "adv"
+PENDING_KIND_ALERT: PendingKind = "alert"
 
 # ChatData keys
-CHATKEY_AWAIT_EXACT = "await_exact"
-CHATKEY_MID = "mid"
-CHATKEY_BAND = "band"
+CHATKEY_AWAIT_EXACT: Final[str] = "await_exact"
+CHATKEY_MID: Final[str] = "mid"
+CHATKEY_BAND: Final[str] = "band"
 
 # Callback action tokens
-BANDS_ACT_BACK = "back"
-BANDS_ACT_EDIT = "edit"
+BANDS_ACT_BACK: Literal["back"] = "back"
+BANDS_ACT_EDIT: Literal["edit"] = "edit"
 
-ALERT_ACT_ACCEPT = "accept"
-ALERT_ACT_IGNORE = "ignore"
-ALERT_ACT_SET = "set"
+ALERT_ACT_ACCEPT: Literal["accept"] = "accept"
+ALERT_ACT_IGNORE: Literal["ignore"] = "ignore"
+ALERT_ACT_SET: Literal["set"] = "set"
 
-ADV_ACT_APPLY = "apply"
-ADV_ACT_IGNORE = "ignore"
-ADV_ACT_SET = "set"
+ADV_ACT_APPLY: Literal["apply"] = "apply"
+ADV_ACT_IGNORE: Literal["ignore"] = "ignore"
+ADV_ACT_SET: Literal["set"] = "set"
 
 # UI tags / fragments
 TAG_UNAUTHORIZED = "[<i>Unauthorized</i>]"
@@ -77,12 +87,12 @@ LABEL_BACK = "Back"
 class TelegramApp:
     """Public facade matching the old TelegramSvc surface."""
 
-    MAX_PENDING = int(os.getenv("LPBOT_PENDING_CAP", "100"))
+    MAX_PENDING: Final[int] = int(os.getenv("LPBOT_PENDING_CAP", "100"))
 
     def __init__(self, token: str, chat_id: int, logger: Any | None = None) -> None:
         self._token = token
         self._chat_id = chat_id
-        self._app: Application | None = None
+        self._app: ApplicationType | None = None
         self._repo: DBRepo | None = None
         self._ready: asyncio.Event = asyncio.Event()
         self._log = logger
@@ -110,11 +120,12 @@ class TelegramApp:
             repo=repo,
             providers=Providers(self._price_provider, self._sigma_provider),
         )
-        app = (
+        app = cast(
+            ApplicationType,
             Application.builder()
             .token(self._token)
             .defaults(Defaults(parse_mode=ParseMode.HTML))
-            .build()
+            .build(),
         )
         self._wire(app)
         self._app = app
@@ -251,12 +262,12 @@ class TelegramApp:
 
     # ---------- Wiring ----------
 
-    def _wire(self, app: Application) -> None:
+    def _wire(self, app: ApplicationType) -> None:
         handlers = self._ensure_handlers()
         bot_ctx = BotCtx(self._send, self._edit_or_send, self._edit_by_id)
 
-        def auth_gate(fn):
-            async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        def auth_gate(fn: HandlerFn) -> HandlerFn:
+            async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 chat = update.effective_chat
                 if chat is None or chat.id != self._chat_id:
                     if update.callback_query:
@@ -264,7 +275,7 @@ class TelegramApp:
                     elif chat:
                         await context.bot.send_message(chat_id=chat.id, text=TAG_UNAUTHORIZED)
                     return
-                return await fn(update, context)
+                await fn(update, context)
 
             return wrapped
 
@@ -310,12 +321,16 @@ class TelegramApp:
         for name, fn in commands:
             app.add_handler(CommandHandler(name, auth_gate(fn)))
 
-        async def on_text_any(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        async def on_text_any(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             message = update.message
             if message is None:
                 return
-            state = context.chat_data.get(CHATKEY_AWAIT_EXACT)
-            if not state:
+            chat_data_raw = context.chat_data
+            if chat_data_raw is None:
+                return
+            chat_data = cast(dict[str, Any], chat_data_raw)
+            state = chat_data.get(CHATKEY_AWAIT_EXACT)
+            if not isinstance(state, dict):
                 return
             payload = (message.text or "").replace(",", " ").split()
             try:
@@ -331,23 +346,24 @@ class TelegramApp:
                 return
             band = state.get(CHATKEY_BAND)
             mid = state.get(CHATKEY_MID)
-            if not isinstance(band, str):
-                context.chat_data.pop(CHATKEY_AWAIT_EXACT, None)
+            if not isinstance(band, str) or band not in BAND_ORDER:
+                chat_data.pop(CHATKEY_AWAIT_EXACT, None)
                 return
-            await self._ensure_repo().upsert_band(band, low, high)
+            band_name = cast(BandName, band)
+            await self._ensure_repo().upsert_band(band_name, low, high)
             if isinstance(mid, int):
                 await self._edit_by_id(
-                    mid, f"{TAG_APPLIED} {escape(band.upper())} → {fmt_range(low, high)}"
+                    mid, f"{TAG_APPLIED} {escape(band_name.upper())} → {fmt_range(low, high)}"
                 )
             bands = await self._ensure_repo().get_bands()
             await self._send(bands_menu_text(bands), bands_menu_kb())
-            context.chat_data.pop(CHATKEY_AWAIT_EXACT, None)
+            chat_data.pop(CHATKEY_AWAIT_EXACT, None)
 
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auth_gate(on_text_any)))
 
-        async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             query = update.callback_query
-            if not query:
+            if query is None:
                 return
             payload = decode(query.data or "")
             if payload is None:
@@ -361,12 +377,15 @@ class TelegramApp:
                     await self._edit_or_send(query, bands_menu_text(bands), bands_menu_kb())
                 elif payload.a == BANDS_ACT_EDIT:
                     bands = await self._ensure_repo().get_bands()
-                    band = (payload.band or "").lower()
-                    current = bands.get(band)
+                    band_name = payload.band
+                    if band_name is None:
+                        await query.answer(f"{TAG_ERROR} Unknown band.", show_alert=True)
+                        return
+                    current = bands.get(band_name)
                     if current is None:
                         await query.answer(f"{TAG_ERROR} Unknown band.", show_alert=True)
                         return
-                    band_label = escape(band.upper())
+                    band_label = escape(band_name.upper())
                     text = (
                         f"<b>Edit Band</b> {band_label}\n"
                         f"<b>Current</b>: {fmt_range(*current)}\n"
@@ -376,14 +395,23 @@ class TelegramApp:
                         [
                             [
                                 InlineKeyboardButton(
-                                    LABEL_BACK, callback_data=encode(BandsAction(a=BANDS_ACT_BACK))
+                                    LABEL_BACK,
+                                    callback_data=encode(BandsAction(a=BANDS_ACT_BACK)),
                                 )
                             ]
                         ]
                     )
                     await self._edit_or_send(query, text, back_markup)
                     mid = query.message.message_id if query.message else None
-                    context.chat_data[CHATKEY_AWAIT_EXACT] = {CHATKEY_MID: mid, CHATKEY_BAND: band}
+                    chat_data_raw = context.chat_data
+                    if chat_data_raw is None:
+                        await query.answer(f"{TAG_ERROR} Unable to track state.", show_alert=True)
+                        return
+                    chat_data = cast(dict[str, Any], chat_data_raw)
+                    chat_data[CHATKEY_AWAIT_EXACT] = {
+                        CHATKEY_MID: mid,
+                        CHATKEY_BAND: band_name,
+                    }
                     await self._send(
                         f"Enter <code>{PROMPT_LOW_HIGH}</code> for <b>{band_label}</b>.",
                         ForceReply(selective=True, input_field_placeholder=PROMPT_LOW_HIGH),
@@ -424,7 +452,12 @@ class TelegramApp:
                     await self._edit_or_send(query, TAG_DISMISSED, None)
                     return
                 if payload.a == ALERT_ACT_SET:
-                    context.chat_data[CHATKEY_AWAIT_EXACT] = {
+                    chat_data_raw = context.chat_data
+                    if chat_data_raw is None:
+                        await query.answer(f"{TAG_ERROR} Unable to track state.", show_alert=True)
+                        return
+                    chat_data = cast(dict[str, Any], chat_data_raw)
+                    chat_data[CHATKEY_AWAIT_EXACT] = {
                         CHATKEY_MID: query.message.message_id if query.message else None,
                         CHATKEY_BAND: payload.band,
                     }
@@ -510,7 +543,7 @@ class TelegramApp:
 
     # ---------- Guards ----------
 
-    def _ensure_app(self) -> Application:
+    def _ensure_app(self) -> ApplicationType:
         if self._app is None:
             raise RuntimeError("Telegram app has not been started")
         return self._app

@@ -7,7 +7,7 @@ import random
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, Protocol, cast
 
 import httpx
 
@@ -42,7 +42,7 @@ def parse_retry_after(response: httpx.Response | None) -> float | None:
         seconds = float(stripped)
     except ValueError:
         try:
-            parsed = parsedate_to_datetime(stripped)
+            parsed = cast(datetime | None, parsedate_to_datetime(stripped))
         except (TypeError, ValueError):
             return None
 
@@ -58,12 +58,16 @@ def parse_retry_after(response: httpx.Response | None) -> float | None:
     return max(0.0, seconds)
 
 
+class UniformRandom(Protocol):
+    def uniform(self, a: float, b: float) -> float: ...
+
+
 def _full_jitter_delay(
     attempt: int,
     *,
     base: float,
     max_backoff: float,
-    rng: random.Random,
+    rng: UniformRandom,
 ) -> float:
     """Exponential backoff with full jitter: Uniform(0, min(max_backoff, base * 2**(n-1)))."""
     expo = min(max_backoff, base * (2 ** (attempt - 1)))
@@ -75,7 +79,7 @@ def _apply_retry_after_floor(
     backoff: float,
     *,
     eps: float,
-    rng: random.Random,
+    rng: UniformRandom,
 ) -> float:
     """Honor Retry-After as a floor; add a small multiplicative jitter above it."""
     if retry_after_floor is None:
@@ -98,7 +102,7 @@ async def request_with_retries(
     timeout: httpx.Timeout | None = None,
     retry_on_status: Iterable[int] | None = None,
     retry_after_jitter_eps: float = DEFAULT_RETRY_AFTER_EPS,
-    rng: random.Random | None = None,
+    rng: UniformRandom | None = None,
     **request_kwargs: Any,
 ) -> httpx.Response:
     """Issue an HTTP request with retry/backoff handling.
@@ -138,7 +142,8 @@ async def request_with_retries(
     retry_statuses = {429} if retry_on_status is None else set(retry_on_status)
     retry_statuses.update({status for status in range(500, 600)})
 
-    rng = rng or random
+    rng_impl: UniformRandom = rng if rng is not None else cast(UniformRandom, random)
+    last_error: httpx.HTTPError | None = None
 
     for attempt in range(1, attempts + 1):
         response: httpx.Response | None = None
@@ -158,34 +163,39 @@ async def request_with_retries(
             response = status_exc.response
             status = response.status_code if response is not None else None
             should_retry = status is not None and (status in retry_statuses or 500 <= status < 600)
-            if not should_retry or attempt == attempts:
+            if not should_retry:
                 raise
+            if attempt == attempts:
+                last_error = status_exc
+                break
 
             retry_after = parse_retry_after(response)
             delay = _full_jitter_delay(
                 attempt,
                 base=base_backoff,
                 max_backoff=max_backoff,
-                rng=rng,
+                rng=rng_impl,
             )
             delay = _apply_retry_after_floor(
                 retry_after,
                 delay,
                 eps=retry_after_jitter_eps,
-                rng=rng,
+                rng=rng_impl,
             )
             await asyncio.sleep(delay)
 
-        except httpx.HTTPError:
+        except httpx.HTTPError as http_error:
             if attempt == attempts:
-                raise
+                last_error = http_error
+                break
             delay = _full_jitter_delay(
                 attempt,
                 base=base_backoff,
                 max_backoff=max_backoff,
-                rng=rng,
+                rng=rng_impl,
             )
             await asyncio.sleep(delay)
 
-    # Should be unreachable; kept for explicitness.
+    if last_error is not None:
+        raise last_error
     raise httpx.HTTPError("request_with_retries exhausted attempts")

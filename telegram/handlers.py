@@ -143,8 +143,12 @@ class Handlers:
 
     async def cmd_status(self, bctx: BotCtx) -> None:
         repo = self.repo
-        price = await (self.providers.price_provider() if self.providers.price_provider else None)
-        sigma = await (self.providers.sigma_provider() if self.providers.sigma_provider else None)
+        price: float | None = None
+        if self.providers.price_provider is not None:
+            price = await self.providers.price_provider()
+        sigma: VolReading | None = None
+        if self.providers.sigma_provider is not None:
+            sigma = await self.providers.sigma_provider()
         bands = await repo.get_bands()
         latest = await repo.get_latest_snapshot()
         baseline = await repo.get_baseline()
@@ -152,7 +156,7 @@ class Handlers:
         lines: list[str] = []
         lines.append(
             f"<b>Price</b>: {price:.2f}"
-            if (price and math.isfinite(price))
+            if (price is not None and math.isfinite(price))
             else "<b>Price</b>: Unknown"
         )
 
@@ -182,10 +186,10 @@ class Handlers:
         else:
             lines.append("<b>Balances</b>: (none; run /updatebalances)")
 
-        if price and (notional and notional > 0):
+        if price is not None and notional and notional > 0:
             planned = {}
             with suppress(ValueError):
-                planned = ranges_for_price(price, bucket or "mid", include_a_on_high=False)
+                planned = ranges_for_price(price, bucket, include_a_on_high=False)
             if planned:
                 amounts_map, unallocated = compute_amounts(
                     price, split, planned, notional, tilt_sol_frac
@@ -236,7 +240,9 @@ class Handlers:
             await bctx.send(_USAGE_UPDATEBAL, None)
             return
 
-        price = await (self.providers.price_provider() if self.providers.price_provider else None)
+        price: float | None = None
+        if self.providers.price_provider is not None:
+            price = await self.providers.price_provider()
         if price is None or not math.isfinite(price) or price <= 0:
             await bctx.send("[<i>Error</i>] Price unavailable. Try again later.", None)
             return
