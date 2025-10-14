@@ -28,12 +28,43 @@ build:
     docker buildx build -t lpbot:local .
 
 smoke:
-    docker run -d --rm --name lpbot -p 8000:8000 lpbot:dev
-    @for i in {1..30}; do \
+    @set -eu -o pipefail; \
+    name=lpbot-smoke; image=lpbot:local; \
+    docker rm -f "$name" >/dev/null 2>&1 || true; \
+    cid=$(docker run -d --name "$name" -p 8000:8000 "$image"); \
+    for i in $(seq 1 30); do \
       code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/healthz || true); \
-      [ "$$code" = "200" ] && docker stop lpbot && exit 0; \
+      if [ "$code" = "200" ]; then \
+        echo "✓ smoke passed — server responded 200 on /healthz"; \
+        docker rm -f "$name" >/dev/null; exit 0; \
+      fi; \
       sleep 1; \
     done; \
-    echo "healthz never returned 200"; docker logs lpbot; docker stop lpbot; exit 1
+    echo "✗ smoke failed — /healthz never returned 200"; \
+    docker logs "$name" || true; \
+    docker rm -f "$name" >/dev/null || true; exit 1
 
 ci: check build smoke
+
+# ------- Compose -------
+
+compose_project := "lpbot"
+compose_file   := "docker-compose.yml"
+
+dc *args:
+    @docker compose -p {{compose_project}} -f {{compose_file}} {{args}}
+
+up *services:
+    @docker compose -p {{compose_project}} -f {{compose_file}} up -d --remove-orphans {{services}}
+
+down:
+    @docker compose -p {{compose_project}} -f {{compose_file}} down --remove-orphans
+
+logs *services:
+    @docker compose -p {{compose_project}} -f {{compose_file}} logs -f {{services}}
+
+ps:
+    @docker compose -p {{compose_project}} -f {{compose_file}} ps
+    
+reload service:
+    @docker compose -p {{compose_project}} -f {{compose_file}} up -d --no-deps --build {{service}}

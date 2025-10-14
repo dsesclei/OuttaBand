@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: int | None = None
     TELEGRAM_ENABLED: bool = False
 
-    METEORA_PAIR_ADDRESS: str
+    METEORA_PAIR_ADDRESS: str = "dummy-pair-address"
     METEORA_BASE_URL: str = "https://dlmm-api.meteora.ag"
 
     CHECK_EVERY_MINUTES: int = 15
