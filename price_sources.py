@@ -1,4 +1,3 @@
-"""Swappable price source implementations kept outside the policy package."""
 from __future__ import annotations
 
 import math
