@@ -1,7 +1,8 @@
 from __future__ import annotations
 import math, time
 from dataclasses import dataclass, field
-from typing import Any
+from importlib import import_module
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import aiosqlite, httpx, structlog
@@ -13,10 +14,43 @@ from db_repo import DBRepo
 from policy import volatility as vol
 from policy.vol_sources import BinanceVolSource
 from price_sources import MeteoraPriceSource
-from telegram import TelegramApp
 from config import Settings
 
 DEFAULT_TIMEOUT = httpx.Timeout(7.5, read=7.5, write=7.5, connect=5.0, pool=5.0)
+
+
+def _load_telegram_app():
+    module = import_module("telegram.app")
+    telegram_app = getattr(module, "TelegramApp", None)
+    if telegram_app is None:
+        raise ImportError("telegram.app.TelegramApp not found")
+    return telegram_app
+
+
+class _DisabledTelegram:
+    def __init__(self, logger: Any) -> None:
+        self._log = logger
+
+    async def start(self, repo: DBRepo) -> None:  # noqa: ARG002
+        return
+
+    async def stop(self) -> None:
+        return
+
+    def set_price_provider(self, fn: Callable[[], Any]) -> None:  # noqa: ARG002
+        return
+
+    def set_sigma_provider(self, fn: Callable[[], Any]) -> None:  # noqa: ARG002
+        return
+
+    async def send_breach_offer(self, **kwargs: Any) -> None:  # noqa: ARG002
+        return
+
+    async def send_advisory_card(self, advisory: dict[str, Any], drift_line: str | None = None) -> None:  # noqa: ARG002
+        return
+
+    def is_ready(self) -> bool:
+        return False
 
 @dataclass
 class Runtime:
@@ -27,7 +61,7 @@ class Runtime:
     http: httpx.AsyncClient | None = None
     db: aiosqlite.Connection | None = None
     repo: DBRepo | None = None
-    tg: TelegramApp | None = None
+    tg: Any | None = None
     scheduler: AsyncIOScheduler | None = None
     ctx: jobs.AppContext | None = None
 
@@ -47,17 +81,20 @@ class Runtime:
         self.repo = DBRepo(db, base_log.bind(module="db"))
         await self.repo.init(s)
 
-        self.http = httpx.AsyncClient(http2=True, timeout=DEFAULT_TIMEOUT)
+        self.http = httpx.AsyncClient(http2=False, timeout=DEFAULT_TIMEOUT)
 
-        self.tg = TelegramApp(s.TELEGRAM_BOT_TOKEN or "", int(s.TELEGRAM_CHAT_ID or 0), logger=base_log.bind(module="telegram"))
+        tg_logger = base_log.bind(module="telegram")
         if s.TELEGRAM_ENABLED:
+            TelegramApp = _load_telegram_app()
+            self.tg = TelegramApp(s.TELEGRAM_BOT_TOKEN or "", int(s.TELEGRAM_CHAT_ID or 0), logger=tg_logger)
             await self.tg.start(self.repo)
+        else:
+            self.tg = _DisabledTelegram(tg_logger)
 
         price_src = MeteoraPriceSource(self.http, s.METEORA_PAIR_ADDRESS, s.METEORA_BASE_URL, s.HTTP_UA_MAIN)
         vol_src = BinanceVolSource(self.http, s.BINANCE_BASE_URL, s.BINANCE_SYMBOL, s.VOL_CACHE_TTL_SECONDS, s.VOL_MAX_STALE_SECONDS, s.HTTP_UA_VOL)
-        if s.TELEGRAM_ENABLED:
-            self.tg.set_price_provider(price_src.read)
-            self.tg.set_sigma_provider(vol_src.read)
+        self.tg.set_price_provider(price_src.read)
+        self.tg.set_sigma_provider(vol_src.read)
 
         job_settings = jobs.JobSettings(check_every_minutes=s.CHECK_EVERY_MINUTES,
                                         cooldown_minutes=s.COOLDOWN_MINUTES,
