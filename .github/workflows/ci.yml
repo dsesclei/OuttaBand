@@ -1,48 +1,122 @@
-name: CI
+name: ci
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+  push: { branches: ["main"] }
+  pull_request: { branches: ["main"] }
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  test:
+  lint-type-test:
+    name: lint • type • test (py311)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.11"]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: install deps
+        run: uv sync --all-extras --dev
+      - name: ruff (lint)
+        run: uv run ruff check .
+      - name: ruff (fmt check)
+        run: uv run ruff format --check .
+      - name: mypy
+        run: uv run mypy .
+      - name: pytest
+        run: |
+          mkdir -p reports
+          uv run pytest -q --junitxml=reports/junit.xml --cov --cov-report=xml
+      - name: upload reports
+        uses: actions/upload-artifact@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          name: junit-and-coverage
+          path: reports
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
-        run: pip install --no-cache-dir -r requirements.txt
-
-      - name: Run pytest
-        run: pytest -q
-
-  docker:
+  docker-build:
+    name: docker build (+ cache, sbom, scan)
+    needs: [lint-type-test]
     runs-on: ubuntu-latest
-    needs: test
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            SERVICE_VERSION=${{ github.sha }}
+      - name: sbom
+        uses: anchore/syft-action@v0
+        with:
+          image: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          format: spdx-json
+          output: sbom.spdx.json
+      - name: trivy scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+          format: 'table'
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
 
-      - name: Build image
-        run: docker build -t lpbot:${{ github.sha }} .
+  smoke-compose:
+    name: container smoke test
+    needs: [docker-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: docker build -t lpbot:ci .
+      - name: run compose
+        env:
+          TELEGRAM_ENABLED: "false"
+        run: |
+          docker compose up -d
+          for i in {1..30}; do
+            sleep 2
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/healthz || true)
+            if [ "$code" = "200" ]; then exit 0; fi
+          done
+          echo "healthz never returned 200"
+          docker compose logs || true
+          exit 1
+
+  release:
+    name: release on tag
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [lint-type-test, docker-build, smoke-compose]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            SERVICE_VERSION=${{ github.ref_name }}
