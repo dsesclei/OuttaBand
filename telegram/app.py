@@ -40,6 +40,41 @@ from .pending import PendingStore
 from .render import adv_kb, advisory_text, alert_kb, bands_menu_kb, bands_menu_text
 
 
+# ---------- Constants ----------
+
+# Pending kinds
+PENDING_KIND_ADV = "adv"
+PENDING_KIND_ALERT = "alert"
+
+# ChatData keys
+CHATKEY_AWAIT_EXACT = "await_exact"
+CHATKEY_MID = "mid"
+CHATKEY_BAND = "band"
+
+# Callback action tokens
+BANDS_ACT_BACK = "back"
+BANDS_ACT_EDIT = "edit"
+
+ALERT_ACT_ACCEPT = "accept"
+ALERT_ACT_IGNORE = "ignore"
+ALERT_ACT_SET = "set"
+
+ADV_ACT_APPLY = "apply"
+ADV_ACT_IGNORE = "ignore"
+ADV_ACT_SET = "set"
+
+# UI tags / fragments
+TAG_UNAUTHORIZED = "[<i>Unauthorized</i>]"
+TAG_ERROR = "[<i>Error</i>]"
+TAG_APPLIED = "[<i>Applied</i>]"
+TAG_DISMISSED = "[<i>Dismissed</i>]"
+TAG_STALE = "[<i>Stale</i>]"
+TAG_INVALID = "[<i>Invalid</i>]"
+
+PROMPT_LOW_HIGH = "low high"
+LABEL_BACK = "Back"
+
+
 class TelegramApp:
     """Public facade matching the old TelegramSvc surface."""
 
@@ -57,7 +92,7 @@ class TelegramApp:
         self._pending = PendingStore(cap=self.MAX_PENDING, ttl_s=3600)
         self._handlers: Handlers | None = None
 
-    # Provider setters
+    # ---------- Provider Setters ----------
 
     def set_price_provider(self, fn: Callable[[], Awaitable[float | None]]) -> None:
         self._price_provider = fn
@@ -65,7 +100,7 @@ class TelegramApp:
     def set_sigma_provider(self, fn: Callable[[], Awaitable[VolReading | None]]) -> None:
         self._sigma_provider = fn
 
-    # Lifecycle
+    # ---------- Lifecycle ----------
 
     async def start(self, repo: DBRepo) -> None:
         if self._app is not None:
@@ -110,7 +145,7 @@ class TelegramApp:
     def is_ready(self) -> bool:
         return self._ready.is_set()
 
-    # Public send helpers
+    # ---------- Public Send Helpers ----------
 
     async def send_text(self, text: str) -> None:
         await self._send(text, None)
@@ -153,10 +188,10 @@ class TelegramApp:
 
         # Stash pending payload (BandMap) and send
         adv_payload: AdvPayload = dict(ranges)
-        token = self._pending.put("adv", adv_payload)
+        token = self._pending.put(PENDING_KIND_ADV, adv_payload)
         keyboard = adv_kb(token)
         await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=keyboard)
-        
+
     async def send_breach_offer(
         self,
         band: BandName,
@@ -206,11 +241,11 @@ class TelegramApp:
         if amount_line:
             text = f"{text}\n{amount_line}"
 
-        token = self._pending.put("alert", AlertPayload(band, suggested_range))
+        token = self._pending.put(PENDING_KIND_ALERT, AlertPayload(band, suggested_range))
         keyboard = alert_kb(band, token)
         await app.bot.send_message(chat_id=self._chat_id, text=text, reply_markup=keyboard)
 
-    # Wiring
+    # ---------- Wiring ----------
 
     def _wire(self, app: Application) -> None:
         handlers = self._ensure_handlers()
@@ -221,9 +256,9 @@ class TelegramApp:
                 chat = update.effective_chat
                 if chat is None or chat.id != self._chat_id:
                     if update.callback_query:
-                        await update.callback_query.answer("[<i>Unauthorized</i>]", show_alert=True)
+                        await update.callback_query.answer(TAG_UNAUTHORIZED, show_alert=True)
                     elif chat:
-                        await context.bot.send_message(chat_id=chat.id, text="[<i>Unauthorized</i>]")
+                        await context.bot.send_message(chat_id=chat.id, text=TAG_UNAUTHORIZED)
                     return
                 return await fn(update, context)
 
@@ -275,7 +310,7 @@ class TelegramApp:
             message = update.message
             if message is None:
                 return
-            state = context.chat_data.get("await_exact")
+            state = context.chat_data.get(CHATKEY_AWAIT_EXACT)
             if not state:
                 return
             payload = (message.text or "").replace(",", " ").split()
@@ -286,19 +321,19 @@ class TelegramApp:
                 if not (math.isfinite(low) and math.isfinite(high) and low < high):
                     raise ValueError
             except ValueError:
-                await self._send("[<i>Invalid</i>] Expected two numbers: <code>low high</code>.", None)
+                await self._send(f"{TAG_INVALID} Expected two numbers: <code>{PROMPT_LOW_HIGH}</code>.", None)
                 return
-            band = state.get("band")
-            mid = state.get("mid")
+            band = state.get(CHATKEY_BAND)
+            mid = state.get(CHATKEY_MID)
             if not isinstance(band, str):
-                context.chat_data.pop("await_exact", None)
+                context.chat_data.pop(CHATKEY_AWAIT_EXACT, None)
                 return
             await self._ensure_repo().upsert_band(band, low, high)
             if isinstance(mid, int):
-                await self._edit_by_id(mid, f"[<i>Applied</i>] {escape(band.upper())} → {fmt_range(low, high)}")
+                await self._edit_by_id(mid, f"{TAG_APPLIED} {escape(band.upper())} → {fmt_range(low, high)}")
             bands = await self._ensure_repo().get_bands()
             await self._send(bands_menu_text(bands), bands_menu_kb())
-            context.chat_data.pop("await_exact", None)
+            context.chat_data.pop(CHATKEY_AWAIT_EXACT, None)
 
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auth_gate(on_text_any)))
 
@@ -312,78 +347,84 @@ class TelegramApp:
                 return
 
             if isinstance(payload, BandsAction):
-                if payload.a == "back":
+                if payload.a == BANDS_ACT_BACK:
                     await query.answer()
                     bands = await self._ensure_repo().get_bands()
                     await self._edit_or_send(query, bands_menu_text(bands), bands_menu_kb())
-                elif payload.a == "edit":
+                elif payload.a == BANDS_ACT_EDIT:
                     bands = await self._ensure_repo().get_bands()
                     band = (payload.band or "").lower()
                     current = bands.get(band)
                     if current is None:
-                        await query.answer("[<i>Error</i>] Unknown band.", show_alert=True)
+                        await query.answer(f"{TAG_ERROR} Unknown band.", show_alert=True)
                         return
                     band_label = escape(band.upper())
                     text = (
                         f"<b>Edit Band</b> {band_label}\n"
                         f"<b>Current</b>: {fmt_range(*current)}\n"
-                        "Send <code>low high</code> or tap Back."
+                        f"Send <code>{PROMPT_LOW_HIGH}</code> or tap {LABEL_BACK}."
                     )
                     back_markup = InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("Back", callback_data=encode(BandsAction(a="back")))]]
+                        [[InlineKeyboardButton(LABEL_BACK, callback_data=encode(BandsAction(a=BANDS_ACT_BACK)))]]
                     )
                     await self._edit_or_send(query, text, back_markup)
                     mid = query.message.message_id if query.message else None
-                    context.chat_data["await_exact"] = {"mid": mid, "band": band}
+                    context.chat_data[CHATKEY_AWAIT_EXACT] = {CHATKEY_MID: mid, CHATKEY_BAND: band}
                     await self._send(
-                        f"Enter <code>low high</code> for <b>{band_label}</b>.",
-                        ForceReply(selective=True, input_field_placeholder="low high"),
+                        f"Enter <code>{PROMPT_LOW_HIGH}</code> for <b>{band_label}</b>.",
+                        ForceReply(selective=True, input_field_placeholder=PROMPT_LOW_HIGH),
                     )
                 return
 
             if isinstance(payload, AlertAction):
-                pending = self._pending.pop("alert", payload.t)
+                pending = self._pending.pop(PENDING_KIND_ALERT, payload.t)
                 if not pending:
-                    await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
+                    await query.answer(f"{TAG_STALE} This alert is no longer active.", show_alert=True)
                     return
                 pend_payload = pending.payload
                 if not isinstance(pend_payload, AlertPayload):
-                    await query.answer("[<i>Error</i>] Malformed alert payload.", show_alert=True)
+                    await query.answer(f"{TAG_ERROR} Malformed alert payload.", show_alert=True)
                     return
                 if pend_payload.band != payload.band:
-                    await query.answer("[<i>Stale</i>] This alert is no longer active.", show_alert=True)
+                    await query.answer(f"{TAG_STALE} This alert is no longer active.", show_alert=True)
                     return
                 rng = pend_payload.suggested_range
                 await query.answer()
                 band_label = escape(payload.band.upper())
-                if payload.a == "accept":
+                if payload.a == ALERT_ACT_ACCEPT:
                     await self._ensure_repo().upsert_band(payload.band, rng[0], rng[1])
                     with suppress(Exception):
                         if self._log:
                             self._log.info("breach_applied", band=payload.band, low=rng[0], high=rng[1])
-                    await self._edit_or_send(query, f"[<i>Applied</i>] {band_label} → {fmt_range(*rng)}", None)
+                    await self._edit_or_send(query, f"{TAG_APPLIED} {band_label} → {fmt_range(*rng)}", None)
                     return
-                if payload.a == "ignore":
-                    await self._edit_or_send(query, "[<i>Dismissed</i>]", None)
+                if payload.a == ALERT_ACT_IGNORE:
+                    await self._edit_or_send(query, TAG_DISMISSED, None)
                     return
-                if payload.a == "set":
-                    context.chat_data["await_exact"] = {"mid": query.message.message_id if query.message else None, "band": payload.band}
-                    prompt = f"Send <code>low high</code> for band <b>{band_label}</b> (e.g. <code>141.25 159.75</code>)."
+                if payload.a == ALERT_ACT_SET:
+                    context.chat_data[CHATKEY_AWAIT_EXACT] = {
+                        CHATKEY_MID: query.message.message_id if query.message else None,
+                        CHATKEY_BAND: payload.band,
+                    }
+                    prompt = (
+                        f"Send <code>{PROMPT_LOW_HIGH}</code> for band <b>{band_label}</b> "
+                        f"(e.g. <code>141.25 159.75</code>)."
+                    )
                     await self._edit_or_send(query, prompt, None)
                     await self._send(
-                        f"Enter <code>low high</code> for <b>{band_label}</b>.",
-                        ForceReply(selective=True, input_field_placeholder="low high"),
+                        f"Enter <code>{PROMPT_LOW_HIGH}</code> for <b>{band_label}</b>.",
+                        ForceReply(selective=True, input_field_placeholder=PROMPT_LOW_HIGH),
                     )
                 return
 
             if isinstance(payload, AdvAction):
-                pending = self._pending.pop("adv", payload.t)
+                pending = self._pending.pop(PENDING_KIND_ADV, payload.t)
                 if not pending:
-                    await query.answer("[<i>Stale</i>] This advisory is no longer active.", show_alert=True)
+                    await query.answer(f"{TAG_STALE} This advisory is no longer active.", show_alert=True)
                     return
                 ranges = cast(AdvPayload, pending.payload)
                 await query.answer()
-                if payload.a == "apply":
+                if payload.a == ADV_ACT_APPLY:
                     try:
                         existing = (await self._ensure_repo().get_bands()).keys()
                         filtered = {name: rng for name, rng in ranges.items() if name in existing}
@@ -392,7 +433,7 @@ class TelegramApp:
                         with suppress(Exception):
                             if self._log:
                                 self._log.error("advisory_apply_failed", error=str(exc))
-                        await self._send("[<i>Error</i>] Apply failed. Please retry.", None)
+                        await self._send(f"{TAG_ERROR} Apply failed. Please retry.", None)
                         return
                     with suppress(Exception):
                         if self._log:
@@ -400,19 +441,21 @@ class TelegramApp:
                                 "advisory_applied",
                                 ranges={name: (rng[0], rng[1]) for name, rng in sorted(filtered.items())},
                             )
-                    summary = ", ".join(f"{escape(name.upper())}→{fmt_range(*rng)}" for name, rng in sorted(filtered.items()))
-                    await self._edit_or_send(query, f"[<i>Applied</i>] {summary}" if summary else "[<i>Applied</i>]", None)
+                    summary = ", ".join(
+                        f"{escape(name.upper())}→{fmt_range(*rng)}" for name, rng in sorted(filtered.items())
+                    )
+                    await self._edit_or_send(query, f"{TAG_APPLIED} {summary}" if summary else TAG_APPLIED, None)
                     return
-                if payload.a == "ignore":
-                    await self._edit_or_send(query, "[<i>Dismissed</i>]", None)
+                if payload.a == ADV_ACT_IGNORE:
+                    await self._edit_or_send(query, TAG_DISMISSED, None)
                     return
-                if payload.a == "set":
+                if payload.a == ADV_ACT_SET:
                     await self._edit_or_send(query, "Select a band to edit.", bands_menu_kb())
                 return
 
         app.add_handler(CallbackQueryHandler(auth_gate(on_callback)))
 
-    # Low-level helpers
+    # ---------- Low-level Helpers ----------
 
     async def _send(self, text: str, reply_markup: Any | None) -> None:
         app = self._ensure_app()
@@ -432,7 +475,7 @@ class TelegramApp:
         except Exception:
             return False
 
-    # Guards
+    # ---------- Guards ----------
 
     def _ensure_app(self) -> Application:
         if self._app is None:
