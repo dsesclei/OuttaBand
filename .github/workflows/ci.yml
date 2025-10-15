@@ -39,7 +39,7 @@ jobs:
           push: false
           load: true
           platforms: linux/amd64          # Load supports single arch
-          tags: lpbot:ci                  # Matches docker-compose.ci.yml
+          tags: outtaband:ci              # Matches docker-compose.ci.yml
           build-args: |
             SERVICE_VERSION=${{ github.sha }}
 
