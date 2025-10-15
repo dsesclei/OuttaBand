@@ -22,7 +22,7 @@ async def test_binance_vol_source_read_propagates(monkeypatch: pytest.MonkeyPatc
             symbol="SOLUSDT",
             cache_ttl=30,
             max_stale=300,
-            user_agent="lpbot-tests",
+            user_agent="outtaband-tests",
         )
         result = await source.read()
         assert result == reading
@@ -51,7 +51,7 @@ async def test_binance_vol_source_read_handles_exceptions(
             symbol="SOLUSDT",
             cache_ttl=30,
             max_stale=300,
-            user_agent="lpbot-tests",
+            user_agent="outtaband-tests",
         )
         result = await source.read()
         assert result is None

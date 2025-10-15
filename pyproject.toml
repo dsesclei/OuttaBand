@@ -1,5 +1,5 @@
 [project]
-name = "lpbot"
+name = "outtaband"
 version = "0.0.0"
 description = "async band watcher with telegram advisories"
 requires-python = ">=3.11"

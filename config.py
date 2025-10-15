@@ -10,7 +10,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from structlog.typing import FilteringBoundLogger
 
-SERVICE_NAME = os.getenv("SERVICE_NAME", "lpbot")
+SERVICE_NAME = os.getenv("SERVICE_NAME", "OuttaBand")
 GIT_SHA = os.getenv("GIT_SHA")
 SERVICE_VERSION = os.getenv("SERVICE_VERSION") or GIT_SHA or "dev"
 
@@ -74,7 +74,7 @@ class Settings(BaseSettings):
 
 
 def configure_logging() -> FilteringBoundLogger:
-    level = os.getenv("LPBOT_LOG_LEVEL", "INFO").upper()
+    level = os.getenv("OUTTABAND_LOG_LEVEL", "INFO").upper()
     level_num = {
         "CRITICAL": logging.CRITICAL,
         "ERROR": logging.ERROR,
@@ -125,7 +125,7 @@ def configure_logging() -> FilteringBoundLogger:
         wrapper_class=structlog.make_filtering_bound_logger(level_num),
         cache_logger_on_first_use=True,
     )
-    base_logger: FilteringBoundLogger = structlog.get_logger("lpbot").bind(
+    base_logger: FilteringBoundLogger = structlog.get_logger("outtaband").bind(
         service=SERVICE_NAME, version=SERVICE_VERSION
     )
     if GIT_SHA:

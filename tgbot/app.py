@@ -88,7 +88,7 @@ LABEL_BACK = "Back"
 class TelegramApp:
     """Public facade matching the old TelegramSvc surface."""
 
-    MAX_PENDING: Final[int] = int(os.getenv("LPBOT_PENDING_CAP", "100"))
+    MAX_PENDING: Final[int] = int(os.getenv("OUTTABAND_PENDING_CAP", "100"))
 
     def __init__(self, token: str, chat_id: int, logger: Any | None = None) -> None:
         self._token = token

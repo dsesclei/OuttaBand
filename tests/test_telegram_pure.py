@@ -12,7 +12,7 @@ from tests.conftest import Capture, now_time
 from tests.test_jobs import FakeRepo
 
 # Provide a lightweight telegram (third-party) stub so pure helpers can be imported
-if "telegram" not in sys.modules or not getattr(sys.modules["telegram"], "_lpbot_stub", False):
+if "telegram" not in sys.modules or not getattr(sys.modules["telegram"], "_outtaband_stub", False):
     telegram_stub = types.ModuleType("telegram")
 
     class InlineKeyboardButton:
@@ -26,7 +26,7 @@ if "telegram" not in sys.modules or not getattr(sys.modules["telegram"], "_lpbot
 
     telegram_stub.InlineKeyboardButton = InlineKeyboardButton
     telegram_stub.InlineKeyboardMarkup = InlineKeyboardMarkup
-    telegram_stub._lpbot_stub = True
+    telegram_stub._outtaband_stub = True
     sys.modules["telegram"] = telegram_stub
 
 callbacks = importlib.import_module("tgbot.callbacks")

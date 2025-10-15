@@ -12,7 +12,7 @@ def _make_source(transport: httpx.BaseTransport) -> MeteoraPriceSource:
         client=client,
         pair_address="pair123",
         base_url="http://example.invalid/api",
-        user_agent="lpbot-test",
+        user_agent="outtaband-test",
     )
 
 

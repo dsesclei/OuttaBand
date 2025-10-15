@@ -25,11 +25,11 @@ run:
     uv run uvicorn main:app --reload
 
 build:
-    docker buildx build -t lpbot:local .
+    docker buildx build -t outtaband:local .
 
 smoke:
     @set -eu -o pipefail; \
-    name=lpbot-smoke; image=lpbot:local; \
+    name=outtaband-smoke; image=outtaband:local; \
     docker rm -f "$name" >/dev/null 2>&1 || true; \
     cid=$(docker run -d --name "$name" -p 8000:8000 "$image"); \
     for i in $(seq 1 30); do \
@@ -48,7 +48,7 @@ ci: check build smoke
 
 # ------- Compose -------
 
-compose_project := "lpbot"
+compose_project := "outtaband"
 compose_file   := "docker-compose.yml"
 
 dc *args:

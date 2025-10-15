@@ -1,14 +1,14 @@
 services:
-  lpbot:
+  outtaband:
     build: .
-    image: lpbot:local
+    image: outtaband:local
     env_file:
       - .env
     environment:
       DB_PATH: /data/app.db
-      LPBOT_LOG_LEVEL: ${LPBOT_LOG_LEVEL:-INFO}
+      OUTTABAND_LOG_LEVEL: ${OUTTABAND_LOG_LEVEL:-INFO}
     volumes:
-      - lpbot-data:/data
+      - outtaband-data:/data
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -21,4 +21,4 @@ services:
       retries: 3
       start_period: 15s
 volumes:
-  lpbot-data:
+  outtaband-data:

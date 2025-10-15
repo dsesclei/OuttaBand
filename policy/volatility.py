@@ -37,7 +37,7 @@ DEFAULT_MAX_STALE = 7200
 
 MAX_FETCH_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 0.5
-DEFAULT_USER_AGENT = "lpbot-volatility/0.1 (+https://github.com/dave/lpbot)"
+DEFAULT_USER_AGENT = "outtaband-volatility/0.1 (+https://github.com/dave/outtaband)"
 REQUEST_TIMEOUT = httpx.Timeout(7.5, connect=5.0, read=7.5, write=7.5, pool=5.0)
 
 

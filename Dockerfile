@@ -33,7 +33,7 @@ EXPOSE 8000
 ARG SERVICE_VERSION=dev
 LABEL org.opencontainers.image.source="https://github.com/${GITHUB_REPOSITORY}" \
       org.opencontainers.image.version="${SERVICE_VERSION}" \
-      org.opencontainers.image.title="lpbot" \
+      org.opencontainers.image.title="OuttaBand" \
       org.opencontainers.image.description="async band watcher; demo ci/cd & sre"
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

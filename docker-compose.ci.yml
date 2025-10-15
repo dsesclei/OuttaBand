@@ -1,6 +1,6 @@
 services:
-  lpbot:
-    image: lpbot:ci
+  outtaband:
+    image: outtaband:ci
     environment:
       DB_PATH: /tmp/app.db
       TELEGRAM_ENABLED: "false"
