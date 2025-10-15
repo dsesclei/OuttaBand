@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from html import escape
 
-import policy.band_advisor as band_advisor
-from shared_types import (
+from .policy import band_advisor
+from .shared_types import (
     BAND_ORDER,
     AmountsMap,
     BandMap,

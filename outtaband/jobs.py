@@ -9,12 +9,12 @@ from typing import Any
 
 from structlog.typing import FilteringBoundLogger
 
-import policy.band_advisor as band_advisor
-from db_repo import DBRepo
-from policy import engine as policy_engine
-from policy.vol_sources import VolSource
-from price_sources import PriceSource
-from shared_types import BandMap, Bucket, Side
+from .db_repo import DBRepo
+from .policy import band_advisor
+from .policy import engine as policy_engine
+from .policy.vol_sources import VolSource
+from .price_sources import PriceSource
+from .shared_types import BandMap, Bucket, Side
 
 
 @dataclass(slots=True)

@@ -39,4 +39,4 @@ LABEL org.opencontainers.image.source="https://github.com/${GITHUB_REPOSITORY}" 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import http.client; c=http.client.HTTPConnection('127.0.0.1',8000,timeout=5); c.request('GET','/healthz'); r=c.getresponse(); exit(0 if r.status==200 else 1)"
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+CMD ["uvicorn", "outtaband.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

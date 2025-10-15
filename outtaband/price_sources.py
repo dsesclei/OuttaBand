@@ -7,7 +7,7 @@ from typing import Any, SupportsFloat, SupportsIndex, cast
 import httpx
 import structlog
 
-import net
+from . import net
 
 log = structlog.get_logger("price_sources")
 

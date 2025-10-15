@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import policy.band_advisor as band_policy
-from shared_types import BAND_ORDER, BandMap, BandName, BandRange, Bucket, Side
+from ..shared_types import BAND_ORDER, BandMap, BandName, BandRange, Bucket, Side
+from . import band_advisor as band_policy
 
 
 @dataclass(slots=True)

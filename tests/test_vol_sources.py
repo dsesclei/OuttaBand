@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from policy import vol_sources, volatility
+from outtaband.policy import vol_sources, volatility
 
 
 @pytest.mark.asyncio

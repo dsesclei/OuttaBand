@@ -6,8 +6,8 @@ import types
 
 import pytest
 
-from policy.volatility import VolReading
-from shared_types import BAND_ORDER, BandMap, Baseline, PendingKind, Snapshot
+from outtaband.policy import VolReading
+from outtaband.shared_types import BAND_ORDER, BandMap, Baseline, PendingKind, Snapshot
 from tests.conftest import Capture, now_time
 from tests.test_jobs import FakeRepo
 
@@ -29,10 +29,10 @@ if "telegram" not in sys.modules or not getattr(sys.modules["telegram"], "_outta
     telegram_stub._outtaband_stub = True
     sys.modules["telegram"] = telegram_stub
 
-callbacks = importlib.import_module("tgbot.callbacks")
-pending = importlib.import_module("tgbot.pending")
-render = importlib.import_module("tgbot.render")
-handlers_mod = importlib.import_module("tgbot.handlers")
+callbacks = importlib.import_module("outtaband.tgbot.callbacks")
+pending = importlib.import_module("outtaband.tgbot.pending")
+render = importlib.import_module("outtaband.tgbot.render")
+handlers_mod = importlib.import_module("outtaband.tgbot.handlers")
 
 BotCtx = handlers_mod.BotCtx
 Handlers = handlers_mod.Handlers

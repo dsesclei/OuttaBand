@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
-import net
+from outtaband import net
 
 
 def _response_with_retry_after(value: str) -> httpx.Response:

@@ -5,7 +5,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from shared_types import PendingKind, PendingPayload
+from ..shared_types import PendingKind, PendingPayload
 
 
 @dataclass

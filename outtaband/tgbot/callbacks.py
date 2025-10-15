@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Literal, TypedDict, cast
 
-from shared_types import BAND_ORDER, BandName
+from ..shared_types import BAND_ORDER, BandName
 
 # Callback kinds
 Kind = Literal["adv", "alert", "bands"]

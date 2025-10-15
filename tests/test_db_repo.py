@@ -6,9 +6,9 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
-from config import Settings
-from db_repo import DBRepo
-from shared_types import Baseline
+from outtaband.config import Settings
+from outtaband.db_repo import DBRepo
+from outtaband.shared_types import Baseline
 from tests.conftest import now_time
 
 

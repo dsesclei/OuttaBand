@@ -3,8 +3,8 @@ from typing import cast
 
 import pytest
 
-from policy import band_advisor
-from shared_types import BAND_ORDER, Bucket, BucketSplit
+from outtaband.policy import band_advisor
+from outtaband.shared_types import BAND_ORDER, Bucket, BucketSplit
 
 
 def test_widths_for_bucket_happy_paths() -> None:

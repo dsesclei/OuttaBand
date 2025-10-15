@@ -58,7 +58,7 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["."]
+source = ["outtaband"]
 omit = ["tests/*", ".venv/*"]
 
 [build-system]
@@ -66,23 +66,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-only-include = [
-  "band_logic",
-  "config",
-  "db_repo",
-  "jobs",
-  "main",
-  "net",
-  "policy",
-  "price_sources",
-  "runtime",
-  "shared_types",
-  "tgbot",
-]
+packages = ["outtaband"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-  "*.py",
+  "outtaband",
   "README.*",
   "pyproject.toml",
   "docker-compose.yml",

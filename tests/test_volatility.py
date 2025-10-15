@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 import pytest
 
-from policy import volatility
+from outtaband.policy import volatility
 from tests.conftest import json_response, make_mock_transport, now_time
 
 

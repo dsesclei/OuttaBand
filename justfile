@@ -22,7 +22,7 @@ test:
 check: fmt lint type test actionlint hadolint
 
 run:
-    uv run uvicorn main:app --reload
+    uv run uvicorn outtaband.main:app --reload
 
 build:
     docker buildx build -t outtaband:local .

@@ -1,5 +1,5 @@
-from policy import band_advisor, engine
-from shared_types import BandMap, Bucket
+from outtaband.policy import band_advisor, engine
+from outtaband.shared_types import BandMap, Bucket
 
 
 def test_compute_breaches_none_when_inside() -> None:

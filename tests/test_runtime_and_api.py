@@ -4,8 +4,8 @@ import importlib
 
 import pytest
 
-from config import Settings, configure_logging, tz
-from runtime import Runtime
+from outtaband.config import Settings, configure_logging, tz
+from outtaband.runtime import Runtime
 
 
 async def _start_runtime(settings: Settings) -> Runtime:
@@ -84,7 +84,7 @@ async def test_api_endpoints(fake_env) -> None:
     settings = Settings(METEORA_PAIR_ADDRESS="dummy_pair")
     assert settings.TELEGRAM_ENABLED is False
 
-    main = importlib.import_module("main")
+    main = importlib.import_module("outtaband.main")
     main = importlib.reload(main)
 
     from fastapi.testclient import TestClient

@@ -1,5 +1,5 @@
-from band_logic import broken_bands, fmt_range, format_advisory_card
-from policy import band_advisor
+from outtaband.band_logic import broken_bands, fmt_range, format_advisory_card
+from outtaband.policy import band_advisor
 
 
 def test_fmt_range_uses_en_dash() -> None:

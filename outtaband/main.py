@@ -7,8 +7,8 @@ from typing import Any
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from config import Settings, configure_logging, service_meta, tz
-from runtime import Runtime
+from .config import Settings, configure_logging, service_meta, tz
+from .runtime import Runtime
 
 settings = Settings()
 log = configure_logging().bind(module="main")
@@ -53,4 +53,4 @@ async def version() -> dict[str, str | None]:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("outtaband.main:app", host="0.0.0.0", port=8000)

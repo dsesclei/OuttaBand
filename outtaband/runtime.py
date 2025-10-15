@@ -12,18 +12,18 @@ import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler  # type: ignore[import-untyped]
 from apscheduler.triggers.interval import IntervalTrigger  # type: ignore[import-untyped]
 
-import jobs
-from config import Settings
-from db_repo import DBRepo
-from policy import volatility as vol
-from policy.vol_sources import BinanceVolSource
-from price_sources import MeteoraPriceSource
+from . import jobs
+from .config import Settings
+from .db_repo import DBRepo
+from .policy import volatility as vol
+from .policy.vol_sources import BinanceVolSource
+from .price_sources import MeteoraPriceSource
 
 DEFAULT_TIMEOUT = httpx.Timeout(7.5, read=7.5, write=7.5, connect=5.0, pool=5.0)
 
 
 def _load_tgbot_app() -> type[Any]:
-    module = import_module("tgbot.app")
+    module = import_module("outtaband.tgbot.app")
     telegram_app = getattr(module, "TelegramApp", None)
     if telegram_app is None:
         raise ImportError("tgbot.app.TelegramApp not found")

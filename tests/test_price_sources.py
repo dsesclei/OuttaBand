@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from price_sources import MeteoraPriceSource
+from outtaband.price_sources import MeteoraPriceSource
 
 
 def _make_source(transport: httpx.BaseTransport) -> MeteoraPriceSource:

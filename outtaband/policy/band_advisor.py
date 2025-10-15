@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from typing import cast
 
-from shared_types import (
+from ..shared_types import (
     BAND_ORDER,
     AdvisoryPayload,
     AmountsMap,

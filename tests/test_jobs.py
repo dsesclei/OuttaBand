@@ -4,10 +4,10 @@ from typing import Any
 
 import pytest
 
-import policy.band_advisor as band_advisor
-from jobs import AppContext, JobSettings, check_once, floor_to_slot, send_daily_advisory
-from policy.volatility import VolReading
-from shared_types import (
+from outtaband.jobs import AppContext, JobSettings, check_once, floor_to_slot, send_daily_advisory
+from outtaband.policy import band_advisor
+from outtaband.policy.volatility import VolReading
+from outtaband.shared_types import (
     AdvisoryPayload,
     BandMap,
     BandName,

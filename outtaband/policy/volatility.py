@@ -24,8 +24,8 @@ from typing import Any
 import httpx
 import structlog
 
-import net
-from shared_types import Bucket, UnixTs
+from .. import net
+from ..shared_types import Bucket, UnixTs
 
 log = structlog.get_logger("volatility")
 

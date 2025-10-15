@@ -7,11 +7,10 @@ from contextlib import suppress
 from html import escape
 from typing import Any
 
-from db_repo import DBRepo
-from policy import VolReading
-from policy.band_advisor import compute_amounts, ranges_for_price, split_for_sigma
-from shared_types import BAND_ORDER
-
+from ..db_repo import DBRepo
+from ..policy import VolReading
+from ..policy.band_advisor import compute_amounts, ranges_for_price, split_for_sigma
+from ..shared_types import BAND_ORDER
 from .render import bands_lines, bands_menu_kb, bands_menu_text, drift_summary, sigma_summary
 
 _USAGE_SETBASELINE = "[<i>Usage</i>] <code>/setbaseline &lt;sol&gt; sol &lt;usdc&gt; usdc</code> (e.g. <code>/setbaseline 1.0 sol 200 usdc</code>)"
